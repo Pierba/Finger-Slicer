@@ -1,6 +1,7 @@
 # temp files
 __pycache__/
-assets/
+assets/*
+!assets/*.gitkeep
 
 # virtual environment
 .venv/
