@@ -1,3 +1,3 @@
 from pathlib import Path
 
-ASSETS = Path('assets')
+ASSETS = Path("assets")
