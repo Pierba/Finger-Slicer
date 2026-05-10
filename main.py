@@ -1,7 +1,6 @@
 import argparse
 from pathlib import Path
 import config as cfg
-from extract_assets import extract_assets
 
 def args_parser() -> argparse.Namespace:
     # Init parser
@@ -29,7 +28,6 @@ def main():
 
     image_path: Path = args.image
     assets_path: Path = args.assets
-    assets = extract_assets(image_path, assets_path)
 
 
 
