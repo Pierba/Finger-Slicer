@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 import config as cfg
-from yolo import extract_objects
+from fastSAM import extract_objects
 
 def args_parser() -> argparse.Namespace:
     # Init parser
