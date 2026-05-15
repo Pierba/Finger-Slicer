@@ -2,6 +2,9 @@
 __pycache__/
 assets/*
 !assets/*.gitkeep
+.vscode/
+# models checkpoints
+*.pt
 
 # virtual environment
 .venv/
