@@ -9,3 +9,6 @@ assets/*
 
 # model parameters
 *.pt
+
+# png files
+*.png
