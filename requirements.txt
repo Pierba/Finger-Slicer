@@ -1,0 +1,6 @@
+# Object Segmentation Tool — dependencies
+# Install with:  pip install -r requirements.txt
+
+ultralytics>=8.3.0    # YOLOv8 + SAM2 (downloads weights automatically on first run)
+opencv-python>=4.9.0  # image display & drawing
+numpy>=1.26.0         # array ops
