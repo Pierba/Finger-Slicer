@@ -28,19 +28,20 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
     # (It will download automatically the first time you run it)
     print("Loading SAM2 model...")
     # 'b' stands for base
-    model = SAM("sam2_b.pt")
+    model = SAM("sam2_l.pt")
     print("Model loaded successfully.")
 
     # Run inference
     print("Generating masks with SAM...")
     results = model.predict(image_path, device=get_device(), conf=cfg.SAM_CONF)
+    result = results[0] # Get the results for the first (and only) image
     # Get the results for the first (and only) image
-    if results[0].masks is None:
+    if result.masks is None:
         print("No objects detected in the image.")
         return
-
+    
     # Raw mask tensors
-    masks_data = results[0].masks.data.cpu().numpy()
+    masks_data = result.masks.data.cpu().numpy()
 
     # Free pyTorch tensors from memory
     del results
@@ -90,10 +91,10 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
     for cand in candidates:
         is_subpart = False
         for saved in final_objects:
-            x_left = max(cand['x'], saved['x'])
-            y_top = max(cand['y'], saved['y'])
-            x_right = min(cand['x'] + cand['w'], saved['x'] + saved['w'])
-            y_bottom = min(cand['y'] + cand['h'], saved['y'] + saved['h'])
+            x_left =    max(cand['x'], saved['x'])
+            y_top =     max(cand['y'], saved['y'])
+            x_right =   min(cand['x'] + cand['w'], saved['x'] + saved['w'])
+            y_bottom =  min(cand['y'] + cand['h'], saved['y'] + saved['h'])
 
             # Check if there is an overlap
             if x_right > x_left and y_bottom > y_top:
@@ -112,4 +113,4 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
 
     # Save
     for i, obj in enumerate(final_objects):
-        yield f"{i}.png", obj['rgba']
+        yield f"{i}_SAM.png", obj['rgba']

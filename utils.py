@@ -1,8 +1,32 @@
+import argparse
+
 import cv2
 import numpy as np
 from pathlib import Path
 import torch
 from typing import Iterable
+import config as cfg
+
+def args_parser() -> argparse.Namespace:
+    # Init parser
+    parser = argparse.ArgumentParser(description="")
+
+    # Flags
+    parser.add_argument(
+        "--image",
+        type=Path,
+        required=True,
+        help="Path to the input image."
+    )
+    parser.add_argument(
+        "--assets",
+        type=Path,
+        default=cfg.ASSETS,
+        help="Path to the output image."
+    )
+    
+    # Read arguments
+    return parser.parse_args()
 
 def get_device() -> torch.device:
     """

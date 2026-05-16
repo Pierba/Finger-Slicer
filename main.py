@@ -1,44 +1,24 @@
-import argparse
-import config as cfg
 from pathlib import Path
 import sam_detection as sam
 import utils
 import yolo_detection as yl
 
-def args_parser() -> argparse.Namespace:
-    # Init parser
-    parser = argparse.ArgumentParser(description="")
-
-    # Flags
-    parser.add_argument(
-        "--image",
-        type=Path,
-        required=True,
-        help="Path to the input image."
-    )
-    parser.add_argument(
-        "--assets",
-        type=Path,
-        default=cfg.ASSETS,
-        help="Path to the output image."
-    )
-    
-    # Read arguments
-    return parser.parse_args()
-
 def main():
-    args = args_parser()
+    args = utils.args_parser()
 
-    image_path: Path = args.image
-    assets_path: Path = args.assets
+    image_path: Path = Path(args.image)
+    assets_path: Path = Path(args.assets)
     
     # CON UN TEST VELOCE YOLO > SAM
     device = utils.get_device()
-    if device.type == "cuda" or device.type == "mps":
-        stream = sam.extract_objects(image_path)
-    else:
-        stream = yl.extract_objects(image_path)
-
+    print(f"Using '{device.type}' for detection.")
+    
+    match device.type:
+        case "cuda" | "mps":
+            stream = sam.extract_objects(image_path)
+        case _:
+            stream = yl.extract_objects(image_path)
+    
     # Save
     utils.save_images(stream, assets_path)
 

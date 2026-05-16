@@ -16,10 +16,12 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
     # Read the image using OpenCV
     print(f"Loading '{image_path}'...")
     img = cv2.imread(image_path)
+
     if img is None:
         print(f"ERROR: loading '{image_path}'.")
         return
     print(f"Image '{image_path}' loaded successfully.")
+    
     # Image attributes
     H, W, _ = img.shape
 
@@ -27,22 +29,23 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
     # (It will download automatically the first time you run it)
     print("Loading YOLOv8-seg model...")
     # 'n' stands for nano (fastest)
-    model = YOLO('yolov8n-seg.pt')
+    model = YOLO('yolov8m-seg.pt')
     print("Model loaded successfully.")
 
     # Run inference
     print("Detecting objects...")
     results = model(image_path, device=get_device(), conf=cfg.YOLO_CONF)
-    # Get the results for the first (and only) image
-    if results[0].masks is None:
+    result = results[0] # Get the results for the first (and only) image
+    
+    if result.masks is None:
         print("No objects detected in the image.")
         return
 
     # Extract bounding boxes, masks, and class IDs
     # Bounding box coordinates [x1, y1, x2, y2]
-    boxes = results[0].boxes.xyxy.cpu().numpy()
+    boxes = result.boxes.xyxy.cpu().numpy()
     # Raw mask tensors
-    masks = results[0].masks.data.cpu().numpy()
+    masks = result.masks.data.cpu().numpy()
 
     # Free pyTorch tensors from memory
     del results
@@ -72,6 +75,6 @@ def extract_objects(image_path: Path) -> Generator[tuple[str, np.ndarray], None,
         rgba_img[:, :, 3] = cropped_alpha
     
         # Save
-        yield f"{i}.png", rgba_img
+        yield f"{i}_YOLO.png", rgba_img
 
     print("Object extraction completed.")
