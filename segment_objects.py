@@ -3,35 +3,36 @@ Object Segmentation & Extraction Tool
 ======================================
 Modes
 -----
-  auto        YOLO26x-seg detects & segments objects automatically.
+  yolo        YOLO26x-seg detects & segments objects automatically.
               Each object is saved as a transparent PNG via its
               pixel-precise instance mask (background fully removed).
+
+  sam         SAM2 fully-automatic segmentation (no clicks needed).
+              SAM2 generates all masks for the image; small objects,
+              background masks and overlapping sub-parts are filtered
+              out automatically. Each surviving object is saved as a
+              transparent PNG.
 
   interactive SAM2 point-click segmentation.
               Click on any object in the window; SAM2 generates the
               mask; press Enter to save a transparent PNG.
 
+
 Usage
 -----
-  python segment_objects.py photo.jpg                  # interactive (default)
-  python segment_objects.py photo.jpg --mode auto
-  python segment_objects.py photo.jpg --mode auto --conf 0.1
+  python segment_objects.py photo.jpg                           # yolo auto (default)
+  python segment_objects.py photo.jpg --model_type sam          # SAM auto
+  python segment_objects.py photo.jpg --model_type sam -i       # SAM interactive
+  python segment_objects.py photo.jpg --model_type yolo --conf 0.1
   python segment_objects.py photo.jpg --output my_dir
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
-
-YOLO26 notes
-------------
-  YOLO26 is NMS-free (end-to-end), 43 % faster on CPU than YOLO11,
-  and includes dedicated instance-segmentation improvements
-  (semantic segmentation loss, multi-scale proto modules).
-  Weights are downloaded automatically on first run.
-  Docs: https://docs.ultralytics.com/models/yolo26
 """
 
 import argparse
 import os
 import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -39,126 +40,36 @@ import numpy as np
 
 from ultralytics import YOLO
 from ultralytics import SAM
+import config as cfg
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Constants
-# ─────────────────────────────────────────────────────────────────────────────
+from segment_utils import *
 
-DEFAULT_YOLO_MODEL = "yolo26x-seg.pt"
-DEFAULT_SAM_MODEL  = "sam2.1_b.pt"
-DEFAULT_OUTPUT_DIR = "output_objects"
-DEFAULT_CONF       = 0.05   # flat-lay / product photos score lower; 0.25 misses most objects
+# ── ENUMS & CONSTANTS ────────────────────────────────────────────────────────
+# BGR colours for mask overlays
+PALETTE: list[tuple[int, int, int]] = cfg.PALETTE
 
-# BGR colours for mask overlays / HUD dots
-PALETTE: list[tuple[int, int, int]] = [
-    ( 72, 199, 142),  # teal
-    (255, 159,  64),  # orange
-    (100, 149, 237),  # cornflower
-    (255,  99, 132),  # pink-red
-    (153, 102, 255),  # purple
-    (255, 205,  86),  # yellow
-]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Image / mask utilities
-# ─────────────────────────────────────────────────────────────────────────────
-
-def upscale_mask(raw: np.ndarray, target_wh: tuple[int, int]) -> np.ndarray:
-    """
-    Resize a float/uint8 raw mask to *target_wh* (W, H) and re-binarise.
-    Returns a uint8 mask with values 0 or 255.
-    """
-    resized = cv2.resize(
-        (raw > 0.5).astype(np.uint8) * 255,
-        target_wh,
-        interpolation=cv2.INTER_LINEAR,
-    )
-    _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
-    return binary
-
-# serve davvero?
-def refine_mask(mask: np.ndarray) -> np.ndarray:
-    """
-    Morphological clean-up:
-      1. Close  – fills small holes inside the object
-      2. Open   – removes isolated specks outside the object
-      3. Largest component – drops disconnected fragments
-    """
-    k_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    k_large = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
-
-    out = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k_large, iterations=2)
-    out = cv2.morphologyEx(out,  cv2.MORPH_OPEN,  k_small, iterations=1)
-
-    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(out, connectivity=8)
-    if n_labels > 2:                          # 0 = background
-        largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-        out = np.where(labels == largest, np.uint8(255), np.uint8(0))
-
-    return out
-
-
-def mask_to_rgba_crop(img_bgr: np.ndarray, mask: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Apply *mask* as the alpha channel of *img_bgr* (transparent background),
-    then crop tightly to the non-zero region.
-    Returns an RGBA ndarray, or None if the mask is empty.
-    """
-    rgba = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2BGRA)
-    rgba[:, :, 3] = mask
-
-    # qui prende la maschera al posto del box
-    ys, xs = np.where(mask > 0)
-    if len(xs) == 0:
-        return None
-
-    cropped = rgba[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
-    return cropped
-
-
-def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int], alpha: float = 0.45) -> np.ndarray:
-    """Return a copy of *base* with a translucent coloured *mask* overlay."""
-    out = base.copy()
-    out[mask > 0] = (
-        out[mask > 0] * (1 - alpha) + np.array(color, np.float32) * alpha
-    ).astype(np.uint8)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(out, contours, -1, color, 2)
-    return out
-
-
-def save_png(crop_rgba: np.ndarray, out_dir: str, name: str) -> str:
-    path = os.path.join(out_dir, f"{name}.png")
-    if not cv2.imwrite(path, crop_rgba):
-        raise OSError(f"Failed to write PNG: {path}")
-    return path
-
+# SAM auto-mode thresholds
+SMALL_OBJECT_THRESHOLD = cfg.SMALL_OBJECT_THRESHOLD
+BACKGROUND_THRESHOLD = cfg.BACKGROUND_THRESHOLD
+SUBPART_OVERLAP_THRESHOLD = cfg.SUBPART_OVERLAP_THRESHOLD
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HUD rendering
 # ─────────────────────────────────────────────────────────────────────────────
-
-def draw_hud(canvas: np.ndarray,
-             lines: list[str],
-             start_y: int = 20) -> None:
+def draw_hud(canvas: np.ndarray, lines: list[str], start_y: int = 20):
     """Render text lines with a black backing rectangle onto *canvas* in-place."""
     font, scale, thick, pad = cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1, 4
     y = start_y
     for line in lines:
         (tw, th), base = cv2.getTextSize(line, font, scale, thick)
-        cv2.rectangle(canvas, (8, y - th - pad), (12 + tw, y + base + pad),
-                      (0, 0, 0), -1)
-        cv2.putText(canvas, line, (10, y), font, scale,
-                    (220, 220, 220), thick, cv2.LINE_AA)
+        cv2.rectangle(canvas, (8, y - th - pad), (12 + tw, y + base + pad), (0, 0, 0), -1)
+        cv2.putText(canvas, line, (10, y), font, scale, (220, 220, 220), thick, cv2.LINE_AA)
         y += th + base + pad + 4
 
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Mode 1 – AUTO  (YOLO26-seg instance segmentation)
+# YOLO AUTO MODE  (YOLO26-seg instance segmentation)
 # ─────────────────────────────────────────────────────────────────────────────
-
-def run_auto(image_path: str, out_dir: str, conf: float, model_name: str):
+def run_yolo_auto(image_path: str, out_dir: str, conf: float, model_name: str):
     """
     Detect and segment objects with YOLO26x-seg.
     For each detection the pipeline is:
@@ -177,80 +88,224 @@ def run_auto(image_path: str, out_dir: str, conf: float, model_name: str):
         sys.exit(f"Cannot read image: {image_path}")
 
     H, W = img.shape[:2]
-    os.makedirs(out_dir, exist_ok=True)
 
     if result.masks is None:
         print("No segmentation masks returned.")
         return
 
-    # extracted the numpy arrays from result
+    # Extract numpy arrays from result.
+    # FIX: confs extracted separately from result.boxes.conf — iterating over
+    # result.boxes.xyxy yields plain (4,) numpy rows with no .conf attribute.
     masks_raw = result.masks.data.cpu().numpy()
-    boxes = result.boxes.xyxy.cpu().numpy()
-    classes = result.boxes.cls.cpu().numpy()
+    boxes     = result.boxes.xyxy.cpu().numpy()   # shape (N, 4): x1, y1, x2, y2
+    confs     = result.boxes.conf.cpu().numpy()   # shape (N,):   confidence scores
+    classes   = result.boxes.cls.cpu().numpy()    # shape (N,):   class indices
 
-    label_counts: dict[str, int] = {}
-    preview = img.copy()
+    # label_counts: dict[str, int] = {}
+    preview  = img.copy()
+    # Collect (filename, crop_rgba) pairs; user will confirm each via save_images.
+    detected: list[tuple[str, np.ndarray]] = []
 
-    # saved is useless because collects data never used, only used for len() ?
-    # saved: list[tuple[str, float, str]] = []
-
-    for idx, (mask_raw, box, cls) in enumerate(zip(masks_raw, boxes, classes)):
+    for idx, (mask_raw, box, conf_v, cls) in enumerate(zip(masks_raw, boxes, confs, classes)):
         # ── metadata ─────────────────────────────────────────────────────
         label  = result.names[int(cls)]         # get class name from model's names list
-        conf_v = float(box.conf[0])             # confidence value
-        color  = PALETTE[idx % len(PALETTE)]    # changing palette colour for each object
+        color  = PALETTE[idx % len(PALETTE)]    # cycling palette colour per object
 
         # ── mask pipeline ────────────────────────────────────────────────
         mask = upscale_mask(mask_raw, (W, H))
-        # mask = refine_mask(mask) this refine seems useless to me and also overkill for our project ?
 
-        # crop image as we used to 
         crop = mask_to_rgba_crop(img, mask)
         if crop is None:
-            print(f"  skip  {label}: empty mask after refinement")
+            print(f"  skip  {label}: empty mask")
             continue
 
-        # ── save ─────────────────────────────────────────────────────────
-        label_counts[label] = label_counts.get(label, 0) + 1
-        name = f"{label}_{label_counts[label]}"
-        path = save_png(crop, out_dir, name)
-        # saved.append((name, conf_v, path))
-        print(f"  ✓  {name:<32}  conf={conf_v:.2f}  →  {path}")
+        # ── queue for user confirmation ───────────────────────────────────
+        name = f"{label}_conf:{conf_v:.2f}"
+        print(f"  detected  {name:<32}  conf={conf_v:.2f}")
+        detected.append((f"{name}.png", crop))
 
-        # ── annotate preview ─────────────────────────────────────────────
+        # ── annotate preview (all detections, regardless of confirmation) ─
         preview = overlay_mask(preview, mask, color=color, alpha=0.40)
-        x1, y1 = map(int, box.xyxy[0][:2])
-        (tw, th), _ = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)
+        # FIX: box is already a plain (4,) numpy array [x1, y1, x2, y2];
+        # the old code called box.xyxy[0][:2] which fails on a numpy row.
+        x1, y1 = map(int, box[:2])
+        tw, th = cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1)[0]
         cv2.rectangle(preview, (x1, y1 - th - 8), (x1 + tw + 4, y1), color, -1)
         cv2.putText(preview, name, (x1 + 2, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 1, cv2.LINE_AA)
 
+    # ── interactive save: user confirms each crop with Y / any other key ──
+    print(f"\nReview {len(detected)} detected object(s) — press Y to save, any other key to skip.\n")
+    save_auto_images(detected, Path(out_dir))
+
+    # ── always write the composite preview as a reference map ─────────────
     prev_path = os.path.join(out_dir, "_preview_auto.png")
     cv2.imwrite(prev_path, preview)
+    print(f"\n   Preview → {prev_path}")
 
-    # print(f"\n✅  {len(saved)} object(s) saved to '{out_dir}/'")
-    print(f"   Preview → {prev_path}")
-
-    # if not saved:
-    #     print("\n⚠  Nothing detected — try lowering --conf (e.g. --conf 0.1)")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Mode 2 – INTERACTIVE  (SAM2 click-to-segment)
+# SAM AUTO MODE  (SAM2 fully-automatic segmentation)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run_sam_auto(image_path: str, out_dir: str, conf: float, model_name: str):
+    """
+    Automatically segment all objects in *image_path* using SAM2.
+
+    Unlike run_auto (YOLO), SAM2 has no concept of object classes: it returns
+    every mask it finds.  Three filtering passes are applied to remove noise:
+
+      1. Size filter    – drops masks whose bounding box is smaller than
+                          cfg.SMALL_OBJECT_THRESHOLD in either dimension.
+      2. Background     – drops masks whose bounding box covers more than
+                          cfg.BACKGROUND_THRESHOLD of the total image area.
+      3. Sub-part dedup – sorts survivors by area (largest first); if a
+                          smaller mask overlaps a larger one by more than
+                          cfg.SUBPART_OVERLAP_THRESHOLD it is treated as a
+                          sub-part of that object and discarded.
+
+    Surviving objects are saved as transparent PNGs and a composite preview
+    (_preview_sam_auto.png) is written to *out_dir*.
+    """
+    print(f"Loading {model_name} …")
+    model = SAM(model_name)
+
+    img = cv2.imread(image_path)
+    if img is None:
+        sys.exit(f"Cannot read image: {image_path}")
+
+    H, W = img.shape[:2]
+    total_image_area = W * H
+
+    print(f"Generating masks with SAM2  (conf ≥ {conf}) …")
+    results = model.predict(image_path, device=get_device(), conf=conf)
+    result  = results[0]
+
+    if result.masks is None:
+        print("No objects detected in the image.")
+        return
+
+    # Pull raw mask tensors to CPU numpy and free the PyTorch tensors.
+    masks_data = result.masks.data.cpu().numpy()
+    del results
+
+    # ── Pass 1 & 2: size filter + background filter ───────────────────────────
+    # Both checks use actual mask pixel counts, NOT bounding-box area.
+    # Bounding-box area over-estimates coverage (a diagonal object fills only
+    # ~50 % of its box), which caused large surfaces like a desk to slip through
+    # the background filter and then incorrectly absorb every object on top of
+    # it during sub-part deduplication.
+    print("Filtering small objects and background …")
+    candidates = []
+    for mask_data in masks_data:
+        # SAM scales masks down internally; resize back to original dimensions.
+        # Values become 0 (background) or 255 (object).
+        mask_uint8 = (mask_data * 255).astype(np.uint8)
+        alpha = cv2.resize(mask_uint8, (W, H), interpolation=cv2.INTER_NEAREST)
+
+        x, y, w, h = cv2.boundingRect(alpha)
+        if w == 0 or h == 0:
+            continue
+
+        # Pass 1 – minimum size: bounding-box dimensions are fine here
+        # (a mask too small in either direction is noise regardless of shape).
+        if w <= SMALL_OBJECT_THRESHOLD or h <= SMALL_OBJECT_THRESHOLD:
+            continue
+
+        # Pass 2 – background: count actual lit pixels, not bbox area.
+        # A desk surface or wall can have a bbox covering 60-70 % of the frame
+        # while its true pixel area is 50-60 %; bbox-based checks let it through.
+        mask_pixel_area = int((alpha > 0).sum())
+        if mask_pixel_area > total_image_area * BACKGROUND_THRESHOLD:
+            continue
+
+        candidates.append({
+            "alpha": alpha,
+            "x": x, "y": y, "w": w, "h": h,
+            "mask_pixel_area": mask_pixel_area,
+        })
+
+    # ── Pass 3: sub-part deduplication ───────────────────────────────────────
+    # Sort largest-first (by actual pixel area) so the dominant object wins
+    # when two masks compete.
+    candidates.sort(key=lambda c: c["mask_pixel_area"], reverse=True)
+
+    print("Filtering overlapping sub-parts …")
+    final_objects: list[dict] = []
+    for cand in candidates:
+        is_subpart = False
+        for saved in final_objects:
+            # Pixel-level intersection: count pixels that are lit in BOTH masks.
+            # This is the only reliable check when objects sit on a surface —
+            # their bounding boxes are entirely inside the surface's box, so a
+            # bbox-based check would wrongly flag every object as a sub-part.
+            pixel_intersection = int(
+                np.logical_and(cand["alpha"] > 0, saved["alpha"] > 0).sum()
+            )
+            if pixel_intersection == 0:
+                continue
+            overlap_ratio = pixel_intersection / cand["mask_pixel_area"]
+            if overlap_ratio > SUBPART_OVERLAP_THRESHOLD:
+                is_subpart = True
+                break
+
+        if not is_subpart:
+            final_objects.append(cand)
+
+    if not final_objects:
+        print("⚠  No objects survived filtering — try lowering --conf or adjusting thresholds in config.py")
+        return
+
+    # ── Build preview + collect crops for user confirmation ──────────────────
+    print("Preparing objects for review …")
+    preview  = img.copy()
+    # Collect (filename, crop_rgba) pairs; user will confirm each via save_images.
+    detected: list[tuple[str, np.ndarray]] = []
+
+    for i, obj in enumerate(final_objects):
+        color = PALETTE[i % len(PALETTE)]
+        alpha = obj["alpha"]
+
+        crop = mask_to_rgba_crop(img, alpha)
+        if crop is None:
+            continue
+
+        name = f"{i:02d}_SAM"
+        print(f"  detected  {name}")
+        detected.append((f"{name}.png", crop))
+
+        # Annotate composite preview (all detections, regardless of confirmation).
+        preview = overlay_mask(preview, alpha, color=color, alpha=0.40)
+        label_pos = (obj["x"], max(obj["y"] - 6, 10))
+        cv2.putText(preview, name, label_pos,
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 1, cv2.LINE_AA)
+
+    # ── interactive save: user confirms each crop with Y / any other key ──
+    print(f"\nReview {len(detected)} detected object(s) — press Y to save, any other key to skip.\n")
+    save_auto_images(detected, Path(out_dir))
+
+    # ── always write the composite preview as a reference map ─────────────
+    prev_path = os.path.join(out_dir, "_preview_sam_auto.png")
+    cv2.imwrite(prev_path, preview)
+    print(f"\n✅  {len(final_objects)} object(s) reviewed, preview → {prev_path}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Mode 3 – INTERACTIVE  (SAM2 click-to-segment)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # class made to keep tracking the session variables
-@dataclass # data class annotation used to get rid of __init__() function essentially
+@dataclass
 class _InteractiveState:
     """All mutable state for the interactive session."""
-    # this field() here is used to prevent that other instances can access the same list ?
-    pos_pts:      list[tuple[int, int]]   = field(default_factory=list)
-    neg_pts:      list[tuple[int, int]]   = field(default_factory=list)
+    pos_pts:      list[tuple[int, int]] = field(default_factory=list)
+    neg_pts:      list[tuple[int, int]] = field(default_factory=list)
     current_mask: Optional[np.ndarray] = None
     obj_count:    int = 0
     color_idx:    int = 0
     status:       str = "Left-click an object to start  |  right-click to exclude"
 
 
-def run_interactive(image_path: str, out_dir: str, sam_name: str):
+def run_interactive(image_path: str, out_dir: str, conf: float, sam_name: str):
     """
     SAM2 interactive segmentation via mouse clicks.
 
@@ -275,55 +330,43 @@ def run_interactive(image_path: str, out_dir: str, sam_name: str):
     os.makedirs(out_dir, exist_ok=True)
 
     # ── window & state ────────────────────────────────────────────────────
-    state = _InteractiveState()             # could be also a dict() in my opinion ?
-    WIN   = "SAM2 Interactive Segmentation" # window title
-    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL) # window creation with adjustable size
+    state = _InteractiveState()
+    WIN   = "SAM2 Interactive Segmentation"
+    cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
 
-    # ── drawing the window ───────────────────────────────────────────────────────────
+    # ── drawing the window ────────────────────────────────────────────────
     def redraw() -> None:
         disp = img.copy()
-        # Display current mask overlay if available
         if state.current_mask is not None:
             color = PALETTE[state.color_idx % len(PALETTE)]
             disp  = overlay_mask(disp, state.current_mask, color=color)
-        
-        # Display points
+
         for p in state.pos_pts:
-            # Drawing green dots
             cv2.circle(disp, p, 6, (0, 230,  80), -1)
-            # cv2.circle(disp, tuple(p), 8, (255, 255, 255),  2)
         for p in state.neg_pts:
-            # Drawing red dots
             cv2.circle(disp, p, 6, (30,  30, 220), -1)
-            # cv2.circle(disp, tuple(p), 8, (255, 255, 255),  2) useless white border for the dots, maybe not needed ? 
-        
-        # Display HUD actions and status string
+
         draw_hud(disp, [
             f"Object #{state.obj_count + 1}   saved: {state.obj_count}",
             "● green = include   ● blue = exclude",
             "[S] segment   [Enter] save   [N] clear   [U] undo   [Q] quit",
             f"→  {state.status}",
         ])
-
-        # Show the updated image in the window
         cv2.imshow(WIN, disp)
 
-    # ── mouse events ─────────────────────────────────────────────────────────────
-    def on_mouse(event: int, x: int, y: int, _flags, _param) -> None:
+    # ── mouse events ──────────────────────────────────────────────────────
+    def on_mouse(event: int, x: int, y: int, _flags, _param):
         match event:
-            # With left click add a positive dot
             case cv2.EVENT_LBUTTONDOWN:
                 state.pos_pts.append((x, y))
                 state.current_mask = None
                 state.status = f"+ positive ({x},{y}) — press S to segment"
-            # With right click add a negative dot
             case cv2.EVENT_RBUTTONDOWN:
                 state.neg_pts.append((x, y))
                 state.current_mask = None
                 state.status = f"- negative ({x},{y}) — press S to segment"
         redraw()
 
-    # Register mouse callback for the interactive window (like event listener) ?
     cv2.setMouseCallback(WIN, on_mouse)
 
     print("\n" + "─" * 56)
@@ -341,25 +384,23 @@ def run_interactive(image_path: str, out_dir: str, sam_name: str):
 
     # ── event loop ────────────────────────────────────────────────────────
     while True:
-        # register key pressed in the window, with a small delay to allow redraw
         key = cv2.waitKey(40) & 0xFF
 
-        # I have tried with match case but it would blow up because of ord() calls and too much indentation ?
-        if key in (ord('q'), 27):   # 'q' or Esc key
+        if key in (ord('q'), 27):       # Q or Esc
             break
         elif key == ord('s'):
             _do_segment(image_path, model, state, W, H)
             redraw()
-        elif key in (13, 10):       # Enter key (13 on Windows, 10 on Unix)
+        elif key in (13, 10):           # Enter (13 Windows, 10 Unix)
             _do_save(img, state, out_dir)
             redraw()
-        elif key == ord('n'):       # 'n' for cleaning current selections
+        elif key == ord('n'):
             state.pos_pts.clear()
             state.neg_pts.clear()
             state.current_mask = None
             state.status = "Cleared — click a new object"
             redraw()
-        elif key == ord('u'):       # 'u' for undoing the last point
+        elif key == ord('u'):
             if state.neg_pts:
                 state.neg_pts.pop()
             elif state.pos_pts:
@@ -368,31 +409,25 @@ def run_interactive(image_path: str, out_dir: str, sam_name: str):
             state.status = "Last point removed"
             redraw()
 
-        # When the window is closed manually it ends the session
-        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1: # This function can return values <= 0
+        if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
             break
 
-    # Close the window and end the session
     cv2.destroyAllWindows()
     print(f"\n✅  {state.obj_count} object(s) saved to '{out_dir}/'")
 
 
 def _do_segment(image_path: str, model, state: _InteractiveState, W: int, H: int):
     """Run SAM2 with current points and update state.current_mask."""
-    # If there are no points we cannot proceed
     if not state.pos_pts and not state.neg_pts:
         state.status = "⚠ Add at least one point first"
         return
 
-    # updating the status string
     state.status = "Segmenting …"
 
-    # Creates an array of all points and corresponding labels (1 for positive, 0 for negative)
-    all_pts = state.pos_pts + state.neg_pts # It concats the lists of positive and negative points into a single list of all points.
+    all_pts = state.pos_pts + state.neg_pts
     all_lbl = [1] * len(state.pos_pts) + [0] * len(state.neg_pts)
 
     try:
-        # Runs the SAM model (points = list of coordinates, labels = list of 1/0 for positive/negative, verobse = False to suppress model output)
         res = model(image_path, points=[all_pts], labels=[all_lbl], verbose=False)
     except Exception as exc:
         state.status = f"SAM2 error: {exc}"
@@ -407,10 +442,8 @@ def _do_segment(image_path: str, model, state: _InteractiveState, W: int, H: int
         state.status = "No mask returned — try different points"
         return
 
-    # ABSOLUTE BLACK MAGIC ?
-    best       = int(np.argmax([m.sum() for m in masks_data]))
-    mask       = upscale_mask(masks_data[best], (W, H))
-    # state.current_mask = refine_mask(mask) same speech as before for auto mode ?
+    best  = int(np.argmax([m.sum() for m in masks_data]))
+    mask  = upscale_mask(masks_data[best], (W, H))
     state.current_mask = mask
     state.status = "Mask ready — Enter to SAVE,  N to retry"
 
@@ -426,8 +459,7 @@ def _do_save(img: np.ndarray, state: _InteractiveState, out_dir: str):
         name = input(f"  Save as (default '{suggested}'): ").strip()
     except (EOFError, KeyboardInterrupt):
         name = ""
-    
-    # Fall back to default if input is empty or interrupted
+
     name = name or suggested
 
     crop = mask_to_rgba_crop(img, state.current_mask)
@@ -435,82 +467,12 @@ def _do_save(img: np.ndarray, state: _InteractiveState, out_dir: str):
         print("  ⚠ Empty mask — nothing saved")
         return
 
-    path = save_png(crop, out_dir, name)
+    path = save_interactive_images(crop, out_dir, name)
     print(f"  ✓  Saved → {path}")
 
-    # Clears out the state object for the next iteration and tracks the count 
     state.obj_count  += 1
     state.color_idx  += 1
     state.pos_pts.clear()
     state.neg_pts.clear()
     state.current_mask = None
     state.status = "Saved!  Click the next object."
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
-
-def build_parser() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        prog="segment_objects.py",
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-    p.add_argument(
-        "image",
-        help="Input image (JPG, PNG, …)"
-    )
-    p.add_argument(
-        "--mode", 
-        choices=["auto", "interactive"],           
-        default="interactive",           
-        help="auto = YOLO26 seg masks | interactive = SAM2  (default: interactive)"
-    )
-    p.add_argument(
-        "--output", 
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Output directory  (default: {DEFAULT_OUTPUT_DIR})"
-    )
-    p.add_argument(
-        "--conf", 
-        type=float, 
-        default=DEFAULT_CONF,       
-        help=f"[auto] confidence threshold  (default: {DEFAULT_CONF}).  \
-                Flat-lay/top-down product photos score 0.05-0.15;       \
-                raise to 0.25+ for standard scene photos."
-    )
-    p.add_argument(
-        "--yolo-model", 
-        default=DEFAULT_YOLO_MODEL,           
-        help=f"[auto] YOLO26 seg weights  (default: {DEFAULT_YOLO_MODEL})\n \
-                Alternatives: yolo26l-seg.pt  yolo26m-seg.pt  yolo26s-seg.pt"
-    )
-    p.add_argument(
-        "--sam-model", 
-        default=DEFAULT_SAM_MODEL,
-        help=f"[interactive] SAM2 weights  (default: {DEFAULT_SAM_MODEL})\n \
-                Higher quality: sam2.1_l.pt"
-    )
-
-    return p.parse_args()
-
-
-def main() -> None:
-    args = build_parser()
-
-    if not os.path.isfile(args.image):
-        sys.exit(f"Image not found: {args.image}")
-
-    match args.mode:
-        case "auto":
-            print("Mode: AUTO  (YOLO26-seg instance segmentation)")
-            run_auto(args.image, args.output, args.conf, args.yolo_model)
-        case "interactive":
-            print("Mode: INTERACTIVE  (SAM2 click-to-segment)")
-            run_interactive(args.image, args.output, args.sam_model)
-        case _:
-            sys.exit(f"Invalid mode: {args.mode}")
-
-if __name__ == "__main__":
-    main()
