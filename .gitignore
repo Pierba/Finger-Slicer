@@ -1,10 +1,14 @@
 # temp files
 __pycache__/
+.vscode/
 assets/*
 !assets/*.gitkeep
-.vscode/
-# models checkpoints
-*.pt
 
 # virtual environment
 .venv/
+
+# model parameters
+*.pt
+
+# png files
+*.png
