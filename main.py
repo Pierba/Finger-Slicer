@@ -1,23 +1,27 @@
-import os
-# from pathlib import Path
-import sys
+from pathlib import Path
+from utils   import build_parser
+
 from segment_objects import run_yolo_auto, run_sam_auto, run_interactive
-from segment_utils import build_parser
+# add finger_track.py
 
 def main():
+    # Parse arguments
     args = build_parser()
 
-    image: str          = args.image
+    image: Path         = args.image
     model_type: str     = args.model_type
     interactive: bool   = args.interactive
-    output_dir: str     = args.output
+    output_dir: Path    = args.output
     conf: float         = args.conf
-    yolo_model: str     = args.yolo_model
-    sam_model: str      = args.sam_model
+    yolo_model: Path    = args.yolo_model
+    sam_model: Path     = args.sam_model
 
-    if not os.path.isfile(args.image):
-        sys.exit(f"Image not found: {args.image}")
+    # Validate input image path
+    if not image.is_file():
+        print(f"Error: Image not found at path '{image}'")
+        return
 
+    # Branch the execution based on the selected model type and mode
     match model_type:
         case "yolo":
             print("Mode: YOLO AUTO  (YOLO26-seg instance segmentation)")
@@ -25,13 +29,10 @@ def main():
         case "sam":
             if interactive:
                 print("Mode: INTERACTIVE  (SAM2 click-to-segment)")
-                run_interactive(image, output_dir, conf, sam_model)
+                run_interactive(image, output_dir, sam_model)
             else:
                 print("Mode: SAM AUTO  (SAM2 fully-automatic segmentation)")
-                run_sam_auto(image, output_dir, conf, sam_model)
-        case _:
-            sys.exit(f"Invalid mode: {model_type}")
-
+                run_sam_auto(image, output_dir, sam_model)
 
 if __name__ == "__main__":
     main()

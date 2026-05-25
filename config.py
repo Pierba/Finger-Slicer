@@ -1,37 +1,49 @@
 from pathlib import Path
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # Constants
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
-ASSETS = Path("assets")
-DEFAULT_YOLO_MODEL = "yolo26x-seg.pt"
-DEFAULT_SAM_MODEL  = "sam2.1_b.pt"
-DEFAULT_OUTPUT_DIR = "assets"
+DEFAULT_OUTPUT_DIR = Path(__file__).parent / "assets"
+
+# YOLO / SAM weights
+DEFAULT_YOLO_MODEL = Path(__file__).parent / ".temp" / "yolo26x-seg.pt"
+DEFAULT_SAM_MODEL  = Path(__file__).parent / ".temp" / "sam2.1_b.pt"
+
 DEFAULT_CONF       = 0.05   # flat-lay / product photos score lower; 0.25 misses most objects
 
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 # SAM auto-mode thresholds
-# ─────────────────────────────────────────────────────────────────────────────
+# =============================================================================
 
-# Minimum bounding-box side length (px) for a mask to be kept.
-# Masks whose width OR height is below this are treated as noise and dropped.
+# Minimum bounding=box side length in pixels for a mask to be kept
+# Masks whose width OR height is below this are treated as noise and dropped
 SMALL_OBJECT_THRESHOLD    = 50
 
-# A mask whose actual pixel count exceeds this fraction of the total image
-# pixel area is assumed to be the background (e.g. a desk surface or wall)
-# and discarded.  Uses real mask pixel area, NOT bounding-box area.
-# 0.50 catches large surfaces while keeping objects up to half the frame.
+# A mask whose pixel count exceeds this percentage of the total image pixel area is treated as background and discarded.
+# Uses real mask pixel area instaed bounding=box one
 BACKGROUND_THRESHOLD      = 0.50
 
-# When two candidate masks overlap, the smaller one is considered a sub-part
-# of the larger one — and dropped — if their actual pixel-level intersection
-# covers more than this fraction of the smaller mask's pixel area.
-# Pixel-level comparison prevents objects *on* a surface from being wrongly
-# discarded just because their bounding boxes sit inside the surface's box.
+# When two candidate masks overlap, the smaller one is considered a sub=part of the larger one,
+# therefore it's dropped if their actual pixel=level intersection covers more than this percentage
+# of the smaller mask's pixel area
+# Pixel=level comparison prevents objects on a surface from being
+# wrongly discarded just because their bounding boxes sit inside the surface's box
 SUBPART_OVERLAP_THRESHOLD = 0.80
 
-# BGR colours for mask overlays
+# =============================================================================
+# Saved=image canvas
+# =============================================================================
+
+# Every extracted object is fitted onto a transparent canvas
+# of these dimensions before being written to disk
+SAVE_IMG_W = 512
+SAVE_IMG_H = 512
+
+# =============================================================================
+# Colors palette for object mask overlays
+# =============================================================================
+
 PALETTE: list[tuple[int, int, int]] = [
     ( 72, 199, 142),  # teal
     (255, 159,  64),  # orange
@@ -41,13 +53,42 @@ PALETTE: list[tuple[int, int, int]] = [
     (255, 205,  86),  # yellow
 ]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Saved-image canvas
-# ─────────────────────────────────────────────────────────────────────────────
+ALPHA_CANVAS = 0.45  # Alpha value for mask overlays
 
-# Every extracted object is fitted (aspect-ratio preserving, centred) onto a
-# transparent canvas of exactly these dimensions before being written to disk.
-# Both auto and interactive modes use the same canvas, so all output PNGs are
-# uniformly sized and compositable without further processing.
-SAVE_IMG_W = 512
-SAVE_IMG_H = 512
+# =============================================================================
+# Hand tracking (MediaPipe HandLandmarker)
+# =============================================================================
+
+# Pretrained MediaPipe hand landmark model.
+# Downloaded on first run
+HAND_MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+    "hand_landmarker/float16/1/hand_landmarker.task"
+)
+HAND_MODEL_PATH = Path(__file__).parent / ".temp" / "hand_landmarker.task"
+
+# Pairs of landmark indices that should be connected by a line to render the hand skeleton
+# (palm + 5 fingers). Indices follow MediaPipe's 21-point layout.
+HAND_CONNECTIONS: list[tuple[int, int]] = [
+    (0, 1), (1, 2), (2, 3), (3, 4),                    # thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),                    # index
+    (5, 9), (9, 10), (10, 11), (11, 12),               # middle
+    (9, 13), (13, 14), (14, 15), (15, 16),             # ring
+    (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),   # pinky + palm edge
+]
+
+# Landmark index of the index-finger tip (the point we want to highlight).
+INDEX_FINGERTIP = 8
+
+# Minimum confidence for the hand detection to be considered successful
+HAND_DETECT_CONFIDENCE = 0.6
+# Minimum confidence for the hand landmarks to be considered tracked successfully
+HAND_TRACK_CONFIDENCE  = 0.6
+# Below this handedness score we display a "low confidence" warning overlay
+HAND_HANDEDNESS_WARN   = 0.7
+
+# Requested webcam capture resolution and frame rate.
+# OpenCV will silently fall back to the nearest mode the camera supports
+CAM_WIDTH  = 1280
+CAM_HEIGHT = 720
+CAM_FPS    = 30
