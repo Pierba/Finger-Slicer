@@ -92,3 +92,33 @@ HAND_HANDEDNESS_WARN   = 0.7
 CAM_WIDTH  = 1280
 CAM_HEIGHT = 720
 CAM_FPS    = 30
+
+# =============================================================================
+# Gameplay
+# =============================================================================
+
+# Folder we pull RGBA projectile sprites from (same place segment_objects.py writes to).
+ASSETS_DIR            = DEFAULT_OUTPUT_DIR
+
+# Longest side of a projectile in pixels after trimming + downscaling the source PNG.
+# Sources are saved at 512x512 with transparent padding — too big to throw around at game scale.
+PROJECTILE_MAX_SIZE   = 180
+
+# Physics (units: pixels per frame at CAM_FPS).
+GRAVITY               = 0.6
+LAUNCH_VX_RANGE       = (2.0, 6.0)      # absolute; sign is chosen at spawn to arc toward centre
+LAUNCH_VY_RANGE       = (-30.0, -25.0)  # negative = upward kick; sized so apex lands in the upper third of the frame
+SPIN_RANGE            = (-6.0, 6.0)     # degrees per frame
+
+# A new projectile spawns every N frames (~1.2s at 30fps). Lower = harder.
+SPAWN_INTERVAL_FRAMES = 35
+
+# Slicing
+TRAIL_LEN             = 6       # fingertip positions kept for the "blade" polyline
+MIN_SLICE_SPEED       = 18      # px between two samples; resting your finger should not slice
+SLICE_HITBOX_SHRINK   = 0.6     # shrink the sprite bbox to this fraction for hit testing
+SLICE_KICK            = 6.0     # horizontal split velocity given to each half on slice
+SLICE_SPIN_BOOST      = 8.0     # extra angular velocity given to each half
+
+# Game over after this many unsliced projectiles fall off-screen.
+MAX_MISSES            = 3

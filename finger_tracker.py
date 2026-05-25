@@ -1,5 +1,4 @@
 from   config import *
-from   utils  import get_device
 
 import time
 import urllib.request
@@ -23,21 +22,6 @@ def load_model() -> Path:
         print(f"Downloading hand_landmarker model to {HAND_MODEL_PATH} ...")
         urllib.request.urlretrieve(HAND_MODEL_URL, HAND_MODEL_PATH)
     return HAND_MODEL_PATH
-
-def use_device():
-    """
-    Map the torch device returned by `get_device()` to a MediaPipe delegate.
-    CUDA / MPS -> GPU, anything else -> CPU.
-
-    Returns:
-        mp_python.BaseOptions.Delegate: The MediaPipe inference backend to use (`GPU` if CUDA/MPS is available, otherwise `CPU`).
-    """
-    device = get_device()
-    if device.type in ("cuda", "mps"):
-        print(f"Torch reports '{device.type}': requesting MediaPipe GPU delegate.")
-        return mp_python.BaseOptions.Delegate.GPU
-    print(f"Torch reports '{device.type}': using MediaPipe CPU delegate.")
-    return mp_python.BaseOptions.Delegate.CPU
 
 def detect_tracking_issues(result) -> list[str]:
     """
@@ -140,8 +124,7 @@ def main() -> None:
     options = mp_vision.HandLandmarkerOptions(
             # Tells MediaPipe which .task (trained neural network weights) to load
             base_options=mp_python.BaseOptions(
-                model_asset_path=str(model_path),
-                delegate=use_device(),
+                model_asset_path=str(model_path)
             ),
             # MediaPipe running mode  
             running_mode=mp_vision.RunningMode.VIDEO,

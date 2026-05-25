@@ -1,0 +1,363 @@
+"""
+Finger Slicer — Fruit-Ninja-style gameplay loop.
+=================================================
+Pulls RGBA sprites from `assets/` (produced by segment_objects.py), launches
+them across the screen with simple projectile physics, and lets the player
+slice them by moving their index fingertip (tracked via MediaPipe).
+
+Pipeline per frame
+------------------
+  webcam read -> mirror -> MediaPipe detect -> update trail
+              -> maybe spawn -> step physics -> detect slices
+              -> draw sprites + blade + HUD -> imshow
+
+Controls
+--------
+  Move your hand quickly through a projectile to slice it.
+  R         Restart (after game over)
+  Q / Esc   Quit
+"""
+from   collections import deque
+from   dataclasses import dataclass, field
+from   typing      import Optional
+
+import random
+import time
+
+import cv2
+import numpy  as np
+
+import mediapipe              as mp
+from   mediapipe.tasks        import python as mp_python
+from   mediapipe.tasks.python import vision as mp_vision
+
+from config         import *
+from utils          import blit_rgba, rotate_rgba, trim_rgba
+from finger_tracker import load_model
+
+# =============================================================================
+# ASSET LOADING
+# =============================================================================
+
+def load_assets() -> list[np.ndarray]:
+    """
+    Load every RGBA PNG from ASSETS_DIR (skipping files prefixed with '_',
+    which are the segmentation previews), trim away transparent padding, and
+    downscale so the longest side <= PROJECTILE_MAX_SIZE.
+    """
+    sprites: list[np.ndarray] = []
+    for path in sorted(ASSETS_DIR.glob("*.png")):
+        if path.name.startswith("_"):
+            continue
+        img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+        if img is None or img.ndim != 3 or img.shape[2] < 4:
+            continue
+        trimmed = trim_rgba(img)
+        if trimmed is None:
+            continue
+        h, w  = trimmed.shape[:2]
+        scale = PROJECTILE_MAX_SIZE / max(h, w)
+        if scale < 1.0:
+            trimmed = cv2.resize(trimmed, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        sprites.append(trimmed)
+    return sprites
+
+
+# =============================================================================
+# PROJECTILE
+# =============================================================================
+
+@dataclass
+class Projectile:
+    """
+    A single sprite flying through the scene. Position and velocity are in
+    pixel space; angle/omega are in degrees and degrees-per-frame.
+    `sliced` flags the two halves so they are not re-sliced; `scored` flags
+    anything that should NOT count as a miss when it leaves the screen
+    (everything sliced + every half spawned from a slice).
+    """
+    sprite: np.ndarray
+    x:      float
+    y:      float
+    vx:     float
+    vy:     float
+    angle:  float = 0.0
+    omega:  float = 0.0
+    sliced: bool  = False
+    scored: bool  = False
+
+    def update(self) -> None:
+        self.vy    += GRAVITY
+        self.x     += self.vx
+        self.y     += self.vy
+        self.angle += self.omega
+
+    def draw(self, frame: np.ndarray) -> None:
+        # Rotate every frame: cheap at ~180px sprites and avoids tracking a separate cached image.
+        rotated = rotate_rgba(self.sprite, self.angle)
+        blit_rgba(frame, rotated, int(self.x), int(self.y))
+
+    def hitbox(self) -> tuple[int, int, int, int]:
+        """
+        Axis-aligned rect around the projectile centre, shrunk by
+        SLICE_HITBOX_SHRINK so the player has to actually cut through the
+        visible object rather than swipe near it.
+        Uses the unrotated sprite dims — fine for the squarish objects we get
+        from segmentation, and much cheaper than a true rotated-poly test.
+        """
+        h, w = self.sprite.shape[:2]
+        bw   = max(1, int(w * SLICE_HITBOX_SHRINK))
+        bh   = max(1, int(h * SLICE_HITBOX_SHRINK))
+        return (int(self.x - bw // 2), int(self.y - bh // 2), bw, bh)
+
+    def offscreen(self, W: int, H: int) -> bool:
+        # `margin` keeps just-barely-spawned projectiles (which start below H) alive.
+        margin = max(self.sprite.shape[:2])
+        return self.y > H + margin or self.x < -margin or self.x > W + margin
+
+
+def _split(p: Projectile) -> list[Projectile]:
+    """
+    v1 slice effect: cut the sprite vertically down its centre and return two
+    half-projectiles that fly apart horizontally with extra spin. The cut is
+    along the sprite's local axis (not the blade's), so it's not a true
+    blade-aligned slice — but the visual reads as "the object came apart" and
+    it's a lot less code than computing the rotated cut line.
+    """
+    w   = p.sprite.shape[1]
+    mid = w // 2
+    left  = p.sprite[:, :mid].copy()
+    right = p.sprite[:, mid:].copy()
+    if left.size == 0 or right.size == 0:
+        return []
+
+    return [
+        Projectile(
+            sprite=left,
+            x=p.x - w / 4, y=p.y,
+            vx=p.vx - SLICE_KICK, vy=p.vy - 2.0,
+            angle=p.angle, omega=p.omega - SLICE_SPIN_BOOST,
+            sliced=True, scored=True,
+        ),
+        Projectile(
+            sprite=right,
+            x=p.x + w / 4, y=p.y,
+            vx=p.vx + SLICE_KICK, vy=p.vy - 2.0,
+            angle=p.angle, omega=p.omega + SLICE_SPIN_BOOST,
+            sliced=True, scored=True,
+        ),
+    ]
+
+
+# =============================================================================
+# GAME STATE
+# =============================================================================
+
+@dataclass
+class GameState:
+    projectiles: list[Projectile] = field(default_factory=list)
+    trail:       deque            = field(default_factory=lambda: deque(maxlen=TRAIL_LEN))
+    score:       int  = 0
+    misses:      int  = 0
+    frame_count: int  = 0
+
+    def reset(self) -> None:
+        self.projectiles.clear()
+        self.trail.clear()
+        self.score       = 0
+        self.misses      = 0
+        self.frame_count = 0
+
+    def game_over(self) -> bool:
+        return self.misses >= MAX_MISSES
+
+    def update_trail(self, point: Optional[tuple[int, int]]) -> None:
+        # Drop the trail when the hand vanishes: otherwise the next reappearance
+        # would join a stale point to a fresh one and slice everything between them.
+        if point is None:
+            self.trail.clear()
+        else:
+            self.trail.append(point)
+
+    def maybe_spawn(self, sprites: list[np.ndarray], W: int, H: int) -> None:
+        if self.frame_count % SPAWN_INTERVAL_FRAMES != 0:
+            return
+        sprite = random.choice(sprites)
+        # Spawn just below the visible frame so the projectile "rises" into view.
+        x = random.randint(int(W * 0.15), int(W * 0.85))
+        y = H + sprite.shape[0] // 2
+
+        # Arc inward: pick |vx| then sign it toward the centre.
+        speed = random.uniform(*LAUNCH_VX_RANGE)
+        vx    = speed if x < W // 2 else -speed
+        vy    = random.uniform(*LAUNCH_VY_RANGE)
+        omega = random.uniform(*SPIN_RANGE)
+        self.projectiles.append(Projectile(sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega))
+
+    def step(self, W: int, H: int) -> None:
+        survivors: list[Projectile] = []
+        for p in self.projectiles:
+            p.update()
+            if p.offscreen(W, H):
+                # A whole projectile that left without being sliced costs a life.
+                # Halves (scored=True) and already-sliced fragments don't.
+                if not p.scored:
+                    self.misses += 1
+                continue
+            survivors.append(p)
+        self.projectiles = survivors
+
+    def detect_slices(self) -> None:
+        """
+        A slice fires when the most recent fingertip segment (a) is moving
+        faster than MIN_SLICE_SPEED and (b) intersects an un-sliced
+        projectile's hitbox. cv2.clipLine does the segment-rect test for us.
+        """
+        if len(self.trail) < 2:
+            return
+        p1, p2 = self.trail[-2], self.trail[-1]
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        if (dx * dx + dy * dy) ** 0.5 < MIN_SLICE_SPEED:
+            return
+
+        next_projectiles: list[Projectile] = []
+        for proj in self.projectiles:
+            if proj.sliced:
+                next_projectiles.append(proj)
+                continue
+            inside, _, _ = cv2.clipLine(proj.hitbox(), p1, p2)
+            if inside:
+                self.score += 1
+                next_projectiles.extend(_split(proj))
+            else:
+                next_projectiles.append(proj)
+        self.projectiles = next_projectiles
+
+
+# =============================================================================
+# RENDERING
+# =============================================================================
+
+def draw_blade(frame: np.ndarray, trail: deque) -> None:
+    """Render the fingertip trail as a tapered white polyline plus a ring at the tip."""
+    pts = list(trail)
+    for i in range(1, len(pts)):
+        # Older segments are thinner: i grows with recency since pts is ordered oldest -> newest.
+        cv2.line(frame, pts[i - 1], pts[i], (255, 255, 255), max(1, i), cv2.LINE_AA)
+    if pts:
+        cv2.circle(frame, pts[-1], 12, (0, 255, 0), 2)
+
+
+def draw_hud(frame: np.ndarray, state: GameState, W: int) -> None:
+    cv2.putText(frame, f"Score: {state.score}", (W - 230, 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(frame, f"Misses: {state.misses}/{MAX_MISSES}", (W - 230, 70),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
+
+
+def draw_game_over(frame: np.ndarray, state: GameState, W: int, H: int) -> None:
+    title = "GAME OVER"
+    sub   = f"Final score: {state.score}   |   R = restart   Q = quit"
+    (tw, _), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)
+    (sw, _), _ = cv2.getTextSize(sub,   cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
+    # Black stroke + white fill so the message stays legible over any webcam background.
+    cv2.putText(frame, title, ((W - tw) // 2, H // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 0, 0), 6, cv2.LINE_AA)
+    cv2.putText(frame, title, ((W - tw) // 2, H // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 3, cv2.LINE_AA)
+    cv2.putText(frame, sub, ((W - sw) // 2, H // 2 + 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
+    cv2.putText(frame, sub, ((W - sw) // 2, H // 2 + 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main() -> None:
+    sprites = load_assets()
+    if not sprites:
+        print(f"No RGBA assets found in '{ASSETS_DIR}'. Run segment_objects.py first.")
+        return
+    print(f"Loaded {len(sprites)} asset(s) from '{ASSETS_DIR}'")
+
+    # MediaPipe hand-landmarker setup (mirrors finger_tracker.py).
+    model_path = load_model()
+    options = mp_vision.HandLandmarkerOptions(
+        base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_hands=1,
+        min_hand_detection_confidence=HAND_DETECT_CONFIDENCE,
+        min_tracking_confidence=HAND_TRACK_CONFIDENCE,
+    )
+
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Error: Could not open webcam.")
+        return
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
+    cap.set(cv2.CAP_PROP_FPS,          CAM_FPS)
+    W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    print(f"Webcam mode: {W}x{H} @ {cap.get(cv2.CAP_PROP_FPS):.1f} fps")
+
+    state = GameState()
+    start = time.monotonic()
+    WIN   = "Finger Slicer (Q to quit)"
+    cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
+
+    with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                break
+            # Mirror so the on-screen image acts like a mirror to the player.
+            frame = cv2.flip(frame, 1)
+
+            # == fingertip detection ===================================
+            rgba         = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+            mp_image     = mp.Image(image_format=mp.ImageFormat.SRGBA, data=rgba)
+            timestamp_ms = int((time.monotonic() - start) * 1000)
+            result       = landmarker.detect_for_video(mp_image, timestamp_ms)
+
+            tip: Optional[tuple[int, int]] = None
+            if result.hand_landmarks:
+                lm  = result.hand_landmarks[0][INDEX_FINGERTIP]
+                tip = (int(lm.x * W), int(lm.y * H))
+
+            # == game step =============================================
+            if not state.game_over():
+                state.update_trail(tip)
+                state.maybe_spawn(sprites, W, H)
+                state.step(W, H)
+                state.detect_slices()
+                state.frame_count += 1
+
+            # == render ================================================
+            for p in state.projectiles:
+                p.draw(frame)
+            draw_blade(frame, state.trail)
+            draw_hud(frame, state, W)
+            if state.game_over():
+                draw_game_over(frame, state, W, H)
+
+            cv2.imshow(WIN, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key in (ord('q'), 27):
+                break
+            if state.game_over() and key == ord('r'):
+                state.reset()
+                start = time.monotonic()
+
+            # Allow closing the window via the [x] button.
+            if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
+                break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
