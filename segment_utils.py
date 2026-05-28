@@ -1,7 +1,8 @@
-from   config   import *
+from   config       import *
 import argparse
-from   pathlib  import Path
-from   typing   import Iterable, Optional
+from   dataclasses  import dataclass, field
+from   pathlib      import Path
+from   typing       import Iterable, Optional
 
 import torch
 import numpy as np
@@ -270,6 +271,21 @@ def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = S
     canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
 
     return canvas
+
+# =============================================================================
+# INTERACTIVE SESSION STATE
+# =============================================================================
+
+@dataclass
+class InteractiveState:
+    """All mutable state for the interactive session."""
+    pos_pts:      list[tuple[int, int]] = field(default_factory=list)
+    neg_pts:      list[tuple[int, int]] = field(default_factory=list)
+    current_mask: Optional[np.ndarray] = None
+    obj_count:    int = 0
+    color_idx:    int = 0
+    status:       str = "Left-click an object to start  |  right-click to exclude"
+
 
 # =============================================================================
 # SAVE IMAGES [INTERACTIVE MODE]
