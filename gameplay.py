@@ -64,24 +64,24 @@ def load_assets() -> list[np.ndarray]:
 # PROJECTILE
 # =============================================================================
 
-def add_bomb_outline(sprite: np.ndarray) -> np.ndarray:
+def add_outline(sprite: np.ndarray, color: tuple[int, int, int], thickness: int) -> np.ndarray:
     """
-    Return a copy of an RGBA sprite with a red contour traced around its
-    silhouette so the player can tell bombs from regular fruit.
-    Outline pixels are forced fully opaque red so they stay visible even
-    where the original sprite was transparent.
+    Return a copy of an RGBA sprite with a coloured contour traced around its
+    silhouette — used to mark special projectiles (red = bomb, yellow = combo).
+    Outline pixels are forced fully opaque so they stay visible even where the
+    original sprite was transparent.
     """
     out = sprite.copy()
     _, mask = cv2.threshold(out[:, :, 3], 0, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     outline = np.zeros(mask.shape, dtype=np.uint8)
-    cv2.drawContours(outline, contours, -1, 255, BOMB_OUTLINE_THICKNESS, cv2.LINE_AA)
+    cv2.drawContours(outline, contours, -1, 255, thickness, cv2.LINE_AA)
 
     where = outline > 0
-    out[where, 0] = BOMB_OUTLINE_COLOR[0]
-    out[where, 1] = BOMB_OUTLINE_COLOR[1]
-    out[where, 2] = BOMB_OUTLINE_COLOR[2]
+    out[where, 0] = color[0]
+    out[where, 1] = color[1]
+    out[where, 2] = color[2]
     out[where, 3] = 255
     return out
 
@@ -95,23 +95,29 @@ class Projectile:
     anything that should NOT count as a miss when it leaves the screen
     (everything sliced + every half spawned from a slice).
     `is_bomb` projectiles end the game instantly if the player slices them.
+    `is_combo` projectiles can be sliced repeatedly and trigger slow-motion.
     """
-    sprite:  np.ndarray
-    x:       float
-    y:       float
-    vx:      float
-    vy:      float
-    angle:   float = 0.0
-    omega:   float = 0.0
-    sliced:  bool  = False
-    scored:  bool  = False
-    is_bomb: bool  = False
+    sprite:   np.ndarray
+    x:        float
+    y:        float
+    vx:       float
+    vy:       float
+    angle:    float = 0.0
+    omega:    float = 0.0
+    sliced:   bool  = False
+    scored:   bool  = False
+    is_bomb:  bool  = False
+    is_combo: bool  = False
+    hits:     int   = 0     # combo-only: how many times it has been hit so far
 
-    def update(self) -> None:
-        self.vy    += GRAVITY
-        self.x     += self.vx
-        self.y     += self.vy
-        self.angle += self.omega
+    def update(self, time_scale: float = 1.0) -> None:
+        # time_scale < 1.0 produces the combo slow-motion effect. Scaling
+        # both gravity and velocity keeps the trajectory shape identical, just
+        # traversed more slowly — what you'd expect from "time slows down".
+        self.vy    += GRAVITY     * time_scale
+        self.x     += self.vx     * time_scale
+        self.y     += self.vy     * time_scale
+        self.angle += self.omega  * time_scale
 
     def draw(self, frame: np.ndarray) -> None:
         # Rotate every frame: cheap at ~180px sprites and avoids tracking a separate cached image.
@@ -188,20 +194,22 @@ class MissMark:
 
 @dataclass
 class GameState:
-    projectiles: list[Projectile] = field(default_factory=list)
-    miss_marks:  list[MissMark]   = field(default_factory=list)
-    trail:       deque            = field(default_factory=lambda: deque(maxlen=TRAIL_LEN))
-    score:       int  = 0
-    misses:      int  = 0
-    frame_count: int  = 0
+    projectiles:   list[Projectile] = field(default_factory=list)
+    miss_marks:    list[MissMark]   = field(default_factory=list)
+    trail:         deque            = field(default_factory=lambda: deque(maxlen=TRAIL_LEN))
+    score:         int  = 0
+    misses:        int  = 0
+    frame_count:   int  = 0
+    slowmo_frames: int  = 0       # remaining frames of combo-induced slow-motion
 
     def reset(self) -> None:
         self.projectiles.clear()
         self.miss_marks.clear()
         self.trail.clear()
-        self.score       = 0
-        self.misses      = 0
-        self.frame_count = 0
+        self.score         = 0
+        self.misses        = 0
+        self.frame_count   = 0
+        self.slowmo_frames = 0
 
     def game_over(self) -> bool:
         return self.misses >= MAX_MISSES
@@ -217,12 +225,16 @@ class GameState:
     def maybe_spawn(self, sprites: list[np.ndarray], W: int, H: int) -> None:
         if self.frame_count % SPAWN_INTERVAL_FRAMES != 0:
             return
-        sprite  = random.choice(sprites)
-        is_bomb = random.random() < BOMB_SPAWN_CHANCE
+        sprite = random.choice(sprites)
+        # Single roll decides between normal / bomb / combo so the probabilities
+        # are exclusive and easy to reason about.
+        roll     = random.random()
+        is_bomb  = roll < BOMB_SPAWN_CHANCE
+        is_combo = not is_bomb and roll < BOMB_SPAWN_CHANCE + COMBO_SPAWN_CHANCE
         if is_bomb:
-            # Bake the red outline into the sprite copy so rotation/drawing
-            # logic works unchanged.
-            sprite = add_bomb_outline(sprite)
+            sprite = add_outline(sprite, BOMB_OUTLINE_COLOR, BOMB_OUTLINE_THICKNESS)
+        elif is_combo:
+            sprite = add_outline(sprite, COMBO_OUTLINE_COLOR, COMBO_OUTLINE_THICKNESS)
         # Spawn just below the visible frame so the projectile "rises" into view.
         x = random.randint(int(W * 0.15), int(W * 0.85))
         y = H + sprite.shape[0] // 2
@@ -232,16 +244,28 @@ class GameState:
         vx    = speed if x < W // 2 else -speed
         vy    = random.uniform(*LAUNCH_VY_RANGE)
         omega = random.uniform(*SPIN_RANGE)
-        self.projectiles.append(Projectile(sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega, is_bomb=is_bomb))
+        # Combos are pure bonus: a combo that leaves unsliced should not cost a
+        # life, so we mark it scored at spawn time.
+        self.projectiles.append(Projectile(
+            sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega,
+            is_bomb=is_bomb, is_combo=is_combo, scored=is_combo,
+        ))
 
     def step(self, W: int, H: int) -> None:
+        # Slow-motion is granted by combo hits and decays one real frame per tick.
+        time_scale = COMBO_SLOWMO_FACTOR if self.slowmo_frames > 0 else 1.0
+        if self.slowmo_frames > 0:
+            self.slowmo_frames -= 1
+
         survivors: list[Projectile] = []
         for p in self.projectiles:
-            p.update()
+            p.update(time_scale)
             if p.offscreen(W, H):
                 # A whole projectile that left without being sliced costs a life.
                 # Halves (scored=True) and already-sliced fragments don't.
-                if not p.scored:
+                # Bombs are skipped too: dodging one is the *correct* play, so
+                # we don't punish/mark it.
+                if not p.scored and not p.is_bomb:
                     # self.misses += 1
                     # Clamp to the visible frame so the X lands at the screen edge
                     # the projectile escaped through, instead of off-canvas.
@@ -278,6 +302,20 @@ class GameState:
                     # the cap so game_over() flips true on the same frame.
                     self.misses = MAX_MISSES
                     next_projectiles.append(proj)
+                elif proj.is_combo:
+                    # Combo: score, refresh slow-motion, and keep it alive so
+                    # the player can keep hitting it. MIN_SLICE_SPEED in the
+                    # outer check already prevents a stationary finger from
+                    # racking up free points.
+                    self.score        += 1
+                    self.slowmo_frames = COMBO_SLOWMO_DURATION
+                    proj.hits         += 1
+                    # Final hit: split it like a regular fruit so the player
+                    # gets the satisfying "it finally came apart" feedback.
+                    if proj.hits >= COMBO_MAX_HITS:
+                        next_projectiles.extend(_split(proj))
+                    else:
+                        next_projectiles.append(proj)
                 else:
                     self.score += 1
                     next_projectiles.extend(_split(proj))

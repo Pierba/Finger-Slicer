@@ -134,3 +134,12 @@ MISS_MARK_COLOR       = (0, 0, 255)  # BGR — red
 BOMB_SPAWN_CHANCE     = 0.15    # probability a given spawn is a bomb
 BOMB_OUTLINE_COLOR    = (0, 0, 255)  # BGR — red
 BOMB_OUTLINE_THICKNESS = 4
+
+# Combo: occasionally a spawn is a "combo" (yellow outline). Each hit scores
+# and refreshes a slow-motion window during which all projectiles move slowly.
+COMBO_SPAWN_CHANCE     = 0.10
+COMBO_OUTLINE_COLOR    = (0, 255, 255)  # BGR — yellow
+COMBO_OUTLINE_THICKNESS = 4
+COMBO_SLOWMO_DURATION  = 20     # frames of slow-motion granted per combo hit
+COMBO_SLOWMO_FACTOR    = 0.35   # physics time-scale while slow-motion is active
+COMBO_MAX_HITS         = 10      # hits before the combo finally splits like normal fruit
