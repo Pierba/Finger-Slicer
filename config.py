@@ -129,3 +129,8 @@ MISS_MARK_LIFETIME    = 30      # frames the mark stays visible (~1s at 30fps)
 MISS_MARK_SIZE        = 28      # half-length of each diagonal stroke, in pixels
 MISS_MARK_THICKNESS   = 5       # stroke thickness
 MISS_MARK_COLOR       = (0, 0, 255)  # BGR — red
+
+# Bombs: occasionally a spawn is a "bomb" (red outline). Slicing one ends the game.
+BOMB_SPAWN_CHANCE     = 0.15    # probability a given spawn is a bomb
+BOMB_OUTLINE_COLOR    = (0, 0, 255)  # BGR — red
+BOMB_OUTLINE_THICKNESS = 4

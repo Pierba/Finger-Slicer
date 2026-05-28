@@ -64,6 +64,28 @@ def load_assets() -> list[np.ndarray]:
 # PROJECTILE
 # =============================================================================
 
+def add_bomb_outline(sprite: np.ndarray) -> np.ndarray:
+    """
+    Return a copy of an RGBA sprite with a red contour traced around its
+    silhouette so the player can tell bombs from regular fruit.
+    Outline pixels are forced fully opaque red so they stay visible even
+    where the original sprite was transparent.
+    """
+    out = sprite.copy()
+    _, mask = cv2.threshold(out[:, :, 3], 0, 255, cv2.THRESH_BINARY)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    outline = np.zeros(mask.shape, dtype=np.uint8)
+    cv2.drawContours(outline, contours, -1, 255, BOMB_OUTLINE_THICKNESS, cv2.LINE_AA)
+
+    where = outline > 0
+    out[where, 0] = BOMB_OUTLINE_COLOR[0]
+    out[where, 1] = BOMB_OUTLINE_COLOR[1]
+    out[where, 2] = BOMB_OUTLINE_COLOR[2]
+    out[where, 3] = 255
+    return out
+
+
 @dataclass
 class Projectile:
     """
@@ -72,16 +94,18 @@ class Projectile:
     `sliced` flags the two halves so they are not re-sliced; `scored` flags
     anything that should NOT count as a miss when it leaves the screen
     (everything sliced + every half spawned from a slice).
+    `is_bomb` projectiles end the game instantly if the player slices them.
     """
-    sprite: np.ndarray
-    x:      float
-    y:      float
-    vx:     float
-    vy:     float
-    angle:  float = 0.0
-    omega:  float = 0.0
-    sliced: bool  = False
-    scored: bool  = False
+    sprite:  np.ndarray
+    x:       float
+    y:       float
+    vx:      float
+    vy:      float
+    angle:   float = 0.0
+    omega:   float = 0.0
+    sliced:  bool  = False
+    scored:  bool  = False
+    is_bomb: bool  = False
 
     def update(self) -> None:
         self.vy    += GRAVITY
@@ -193,7 +217,12 @@ class GameState:
     def maybe_spawn(self, sprites: list[np.ndarray], W: int, H: int) -> None:
         if self.frame_count % SPAWN_INTERVAL_FRAMES != 0:
             return
-        sprite = random.choice(sprites)
+        sprite  = random.choice(sprites)
+        is_bomb = random.random() < BOMB_SPAWN_CHANCE
+        if is_bomb:
+            # Bake the red outline into the sprite copy so rotation/drawing
+            # logic works unchanged.
+            sprite = add_bomb_outline(sprite)
         # Spawn just below the visible frame so the projectile "rises" into view.
         x = random.randint(int(W * 0.15), int(W * 0.85))
         y = H + sprite.shape[0] // 2
@@ -203,7 +232,7 @@ class GameState:
         vx    = speed if x < W // 2 else -speed
         vy    = random.uniform(*LAUNCH_VY_RANGE)
         omega = random.uniform(*SPIN_RANGE)
-        self.projectiles.append(Projectile(sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega))
+        self.projectiles.append(Projectile(sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega, is_bomb=is_bomb))
 
     def step(self, W: int, H: int) -> None:
         survivors: list[Projectile] = []
@@ -244,8 +273,14 @@ class GameState:
                 continue
             inside, _, _ = cv2.clipLine(proj.hitbox(), p1, p2)
             if inside:
-                self.score += 1
-                next_projectiles.extend(_split(proj))
+                if proj.is_bomb:
+                    # Slicing a bomb is an instant game over: bump misses to
+                    # the cap so game_over() flips true on the same frame.
+                    self.misses = MAX_MISSES
+                    next_projectiles.append(proj)
+                else:
+                    self.score += 1
+                    next_projectiles.extend(_split(proj))
             else:
                 next_projectiles.append(proj)
         self.projectiles = next_projectiles
