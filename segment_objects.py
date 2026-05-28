@@ -26,6 +26,7 @@ Usage
   python segment_objects.py photo.jpg --output my_dir
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
 """
+import uuid
 from   pathlib     import Path
 from   dataclasses import dataclass, field
 from   typing      import Optional
@@ -37,7 +38,7 @@ from ultralytics import YOLO
 from ultralytics import SAM
 
 from config        import *            # Constants and thresholds
-from utils         import *     # Mask processing, cropping, saving and preview overlay functions
+from segment_utils import *     # Mask processing, cropping, saving and preview overlay functions
 
 # =============================================================================
 # YOLO AUTO MODE  (YOLO26-seg instance segmentation)
@@ -101,7 +102,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
             continue
 
         # == queue for user confirmation ===================================
-        name = f"object_{i:02d}"
+        name = uuid.uuid4().hex[:8]
         print(f"  detected  {name:<12}  class={label:<15}  conf={conf_v:.2f}")
         detected.append((name, crop))
 
@@ -115,7 +116,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
     save_auto_images(detected, output_dir)
 
     # == always write the composite preview as a reference map =============
-    prev_path = output_dir / "_preview_yolo_auto.png"
+    prev_path = PREVIEW_DIR / "_preview_yolo_auto.png"
     cv2.imwrite(str(prev_path), preview)
     print(f"\nPreview -> {prev_path}")
 
@@ -242,7 +243,7 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
         if crop is None:
             continue
 
-        name = f"object_{i:02d}"
+        name = uuid.uuid4().hex[:8]
         print(f" detected  {name}")
         detected.append((name, crop))
 
@@ -256,7 +257,7 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
     save_auto_images(detected, output_dir)
 
     # == always write the composite preview as a reference map =============
-    prev_path = output_dir / "_preview_sam_auto.png"
+    prev_path = PREVIEW_DIR / "_preview_sam_auto.png"
     cv2.imwrite(str(prev_path), preview)
     print(f"\n{len(final_objects)} object(s) reviewed, preview -> {prev_path}")
 
@@ -350,7 +351,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
 
         draw_hud(disp, [
             f"Object #{state.obj_count + 1}   saved: {state.obj_count}",
-            "green = include   blue = exclude",
+            "green = include   red = exclude",
             "[S] segment   [Enter] save   [C] clear   [Z] undo   [Q] quit",
             f"->  {state.status}",
         ])
@@ -428,7 +429,7 @@ def _do_segment(image_path: Path, model, state: _InteractiveState, W: int, H: in
     Run SAM2 with current points and update state.current_mask.
     """
     if not state.pos_pts and not state.neg_pts:
-        state.status = "! Add at least one point first"
+        state.status = "Add at least one point first !!!"
         return
 
     state.status = "Segmenting ..."
@@ -457,7 +458,7 @@ def _do_segment(image_path: Path, model, state: _InteractiveState, W: int, H: in
     best  = int(np.argmax([m.sum() for m in masks_data]))
     mask  = upscale_mask(masks_data[best], (W, H))
     state.current_mask = refine_mask(mask)
-    state.status = "Mask ready — Enter to SAVE,  N to retry"
+    state.status = "Mask ready — Enter to SAVE"
 
 
 def _do_save(img: np.ndarray, state: _InteractiveState, output_dir: Path):
@@ -473,7 +474,7 @@ def _do_save(img: np.ndarray, state: _InteractiveState, output_dir: Path):
         print("! Empty mask — nothing saved")
         return
 
-    name = f"object_{state.obj_count:02d}"
+    name = uuid.uuid4().hex[:8]
     path = save_interactive_images(crop, output_dir, name)
     print(f"Saved -> {path}")
 
