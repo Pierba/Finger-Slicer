@@ -266,7 +266,7 @@ class GameState:
                 # Bombs are skipped too: dodging one is the *correct* play, so
                 # we don't punish/mark it.
                 if not p.scored and not p.is_bomb:
-                    # self.misses += 1
+                    self.misses += 1
                     # Clamp to the visible frame so the X lands at the screen edge
                     # the projectile escaped through, instead of off-canvas.
                     pad = MISS_MARK_SIZE + MISS_MARK_THICKNESS
@@ -457,7 +457,6 @@ def main() -> None:
                 break
             if state.game_over() and key == ord('r'):
                 state.reset()
-                start = time.monotonic()
 
             # Allow closing the window via the [x] button.
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
