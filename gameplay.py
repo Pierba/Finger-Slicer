@@ -32,8 +32,8 @@ from   mediapipe.tasks        import python as mp_python
 from   mediapipe.tasks.python import vision as mp_vision
 
 from config         import *
-from utils          import blit_rgba, rotate_rgba, trim_rgba
-from finger_tracker import load_model
+from segment_utils  import blit_rgba, rotate_rgba, trim_rgba
+from gameplay_utils import load_model
 
 # =============================================================================
 # ASSET LOADING
@@ -41,14 +41,11 @@ from finger_tracker import load_model
 
 def load_assets() -> list[np.ndarray]:
     """
-    Load every RGBA PNG from ASSETS_DIR (skipping files prefixed with '_',
-    which are the segmentation previews), trim away transparent padding, and
+    Load every RGBA PNG from ASSETS_DIR, trim away transparent padding, and
     downscale so the longest side <= PROJECTILE_MAX_SIZE.
     """
     sprites: list[np.ndarray] = []
-    for path in sorted(ASSETS_DIR.glob("*.png")):
-        if path.name.startswith("_"):
-            continue
+    for path in ASSETS_DIR.glob("*.png"):
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
         if img is None or img.ndim != 3 or img.shape[2] < 4:
             continue
@@ -150,12 +147,25 @@ def _split(p: Projectile) -> list[Projectile]:
 
 
 # =============================================================================
+# MISS MARK
+# =============================================================================
+
+@dataclass
+class MissMark:
+    """Short-lived red 'X' drawn where a projectile left the screen unsliced."""
+    x:   int
+    y:   int
+    age: int = 0
+
+
+# =============================================================================
 # GAME STATE
 # =============================================================================
 
 @dataclass
 class GameState:
     projectiles: list[Projectile] = field(default_factory=list)
+    miss_marks:  list[MissMark]   = field(default_factory=list)
     trail:       deque            = field(default_factory=lambda: deque(maxlen=TRAIL_LEN))
     score:       int  = 0
     misses:      int  = 0
@@ -163,6 +173,7 @@ class GameState:
 
     def reset(self) -> None:
         self.projectiles.clear()
+        self.miss_marks.clear()
         self.trail.clear()
         self.score       = 0
         self.misses      = 0
@@ -202,7 +213,13 @@ class GameState:
                 # A whole projectile that left without being sliced costs a life.
                 # Halves (scored=True) and already-sliced fragments don't.
                 if not p.scored:
-                    self.misses += 1
+                    # self.misses += 1
+                    # Clamp to the visible frame so the X lands at the screen edge
+                    # the projectile escaped through, instead of off-canvas.
+                    pad = MISS_MARK_SIZE + MISS_MARK_THICKNESS
+                    mx = max(pad, min(W - pad, int(p.x)))
+                    my = max(pad, min(H - pad, int(p.y)))
+                    self.miss_marks.append(MissMark(x=mx, y=my))
                 continue
             survivors.append(p)
         self.projectiles = survivors
@@ -237,6 +254,18 @@ class GameState:
 # =============================================================================
 # RENDERING
 # =============================================================================
+
+def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]) -> None:
+    """Draw a red X at every recent miss, then age and prune the list."""
+    s = MISS_MARK_SIZE
+    for m in miss_marks:
+        cv2.line(frame, (m.x - s, m.y - s), (m.x + s, m.y + s),
+                 MISS_MARK_COLOR, MISS_MARK_THICKNESS, cv2.LINE_AA)
+        cv2.line(frame, (m.x - s, m.y + s), (m.x + s, m.y - s),
+                 MISS_MARK_COLOR, MISS_MARK_THICKNESS, cv2.LINE_AA)
+        m.age += 1
+    miss_marks[:] = [m for m in miss_marks if m.age < MISS_MARK_LIFETIME]
+
 
 def draw_blade(frame: np.ndarray, trail: deque) -> None:
     """Render the fingertip trail as a tapered white polyline plus a ring at the tip."""
@@ -292,17 +321,22 @@ def main() -> None:
         min_tracking_confidence=HAND_TRACK_CONFIDENCE,
     )
 
+    # Index 0 = default system webcam
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
+    # Request the desired capture mode
+    # OpenCV silently picks the closest one the camera actually supports
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAM_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS,          CAM_FPS)
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"Webcam mode: {W}x{H} @ {cap.get(cv2.CAP_PROP_FPS):.1f} fps")
-
+    FPS = cap.get(cv2.CAP_PROP_FPS)
+    print(f"Webcam mode: {H}x{W} @ {FPS:.1f} fps "
+          f"(requested {CAM_WIDTH}x{CAM_HEIGHT} @ {CAM_FPS} fps)")
+    
     state = GameState()
     start = time.monotonic()
     WIN   = "Finger Slicer (Q to quit)"
@@ -338,6 +372,7 @@ def main() -> None:
             # == render ================================================
             for p in state.projectiles:
                 p.draw(frame)
+            draw_miss_marks(frame, state.miss_marks)
             draw_blade(frame, state.trail)
             draw_hud(frame, state, W)
             if state.game_over():
@@ -357,7 +392,6 @@ def main() -> None:
 
     cap.release()
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     main()

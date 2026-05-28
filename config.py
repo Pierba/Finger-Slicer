@@ -5,6 +5,7 @@ from pathlib import Path
 # =============================================================================
 
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "assets"
+PREVIEW_DIR      = Path(__file__).parent / "previews"
 
 # YOLO / SAM weights
 DEFAULT_YOLO_MODEL = Path(__file__).parent / ".temp" / "yolo26x-seg.pt"
@@ -122,3 +123,9 @@ SLICE_SPIN_BOOST      = 8.0     # extra angular velocity given to each half
 
 # Game over after this many unsliced projectiles fall off-screen.
 MAX_MISSES            = 3
+
+# Red "X" mark drawn where a projectile leaves the screen unsliced.
+MISS_MARK_LIFETIME    = 30      # frames the mark stays visible (~1s at 30fps)
+MISS_MARK_SIZE        = 28      # half-length of each diagonal stroke, in pixels
+MISS_MARK_THICKNESS   = 5       # stroke thickness
+MISS_MARK_COLOR       = (0, 0, 255)  # BGR — red

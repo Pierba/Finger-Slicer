@@ -1,5 +1,5 @@
 from pathlib import Path
-from utils   import build_parser
+from segment_utils   import build_parser
 
 from segment_objects import run_yolo_auto, run_sam_auto, run_interactive
 # add finger_track.py

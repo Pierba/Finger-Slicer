@@ -5,6 +5,7 @@
 __pycache__/
 .vscode/
 assets/*
+previews/*
 .temp/*
 
 # model parameters
@@ -12,7 +13,7 @@ assets/*
 *.task
 
 # files to keep
-!*.gitkeep
+!.gitkeep
 
 # files to ignore
 *.png

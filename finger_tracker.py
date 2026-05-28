@@ -1,3 +1,27 @@
+"""
+Real-Time Hand Tracking
+========================
+Webcam-based hand landmark detection built on MediaPipe's HandLandmarker.
+Captures frames from the default camera, runs the pretrained
+`hand_landmarker.task` model on each frame, and overlays the 21-point hand
+skeleton plus a highlighted index fingertip on the live preview.
+
+The fingertip coordinates exposed here are what the gameplay loop in
+`gameplay.py` consumes to drive the slicing blade.
+
+Pipeline
+--------
+  1. Lazy-download the MediaPipe hand model on first run (cached under .temp/).
+  2. Open the default webcam and negotiate the requested capture mode.
+  3. For each frame: mirror, convert BGR -> RGBA, run inference in VIDEO mode.
+  4. Draw the skeleton, joints and a green ring around the index fingertip.
+  5. Surface tracking issues (no hand, partially out of frame, low confidence)
+     as red overlay warnings.
+
+Usage
+-----
+  python finger_tracker.py        # opens the preview window; press 'q' to quit
+"""
 from   config import *
 
 import time
@@ -122,19 +146,17 @@ def main() -> None:
     model_path = load_model()
     
     options = mp_vision.HandLandmarkerOptions(
-            # Tells MediaPipe which .task (trained neural network weights) to load
-            base_options=mp_python.BaseOptions(
-                model_asset_path=str(model_path)
-            ),
-            # MediaPipe running mode  
-            running_mode=mp_vision.RunningMode.VIDEO,
-            # Upper bound on how many hands the model will return per frame
-            num_hands=1,
-            # On new detection (no prior hand to track), it only reports a hand if its confidence score is above the threshold
-            min_hand_detection_confidence=HAND_DETECT_CONFIDENCE,
-            # Once a hand is found, the tracker keeps following it across frames as long as its tracking confidence is above the threshold
-            min_tracking_confidence=HAND_TRACK_CONFIDENCE,
-        )
+        # Tells MediaPipe which .task (trained neural network weights) to load
+        base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
+        # MediaPipe running mode  
+        running_mode=mp_vision.RunningMode.VIDEO,
+        # Upper bound on how many hands the model will return per frame
+        num_hands=1,
+        # On new detection (no prior hand to track), it only reports a hand if its confidence score is above the threshold
+        min_hand_detection_confidence=HAND_DETECT_CONFIDENCE,
+        # Once a hand is found, the tracker keeps following it across frames as long as its tracking confidence is above the threshold
+        min_tracking_confidence=HAND_TRACK_CONFIDENCE,
+    )
 
     # Index 0 = default system webcam
     cap = cv2.VideoCapture(0)
