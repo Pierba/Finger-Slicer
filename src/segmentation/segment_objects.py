@@ -35,8 +35,8 @@ import numpy as np
 from ultralytics import YOLO
 from ultralytics import SAM
 
-from config        import *            # Constants and thresholds
-from segment_utils import *     # Mask processing, cropping, saving and preview overlay functions
+from config                         import *            # Constants and thresholds
+from src.segmentation.segment_utils import *     # Mask processing, cropping, saving and preview overlay functions
 
 # =============================================================================
 # YOLO AUTO MODE  (YOLO26-seg instance segmentation)

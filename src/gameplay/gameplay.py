@@ -27,8 +27,8 @@ import mediapipe              as mp
 from   mediapipe.tasks        import python as mp_python
 from   mediapipe.tasks.python import vision as mp_vision
 
-from config         import *
-from gameplay_utils  import *
+from config                         import *
+from src.gameplay.gameplay_utils    import *
 
 # =============================================================================
 # MAIN
