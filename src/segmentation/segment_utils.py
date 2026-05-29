@@ -1,12 +1,13 @@
-from   config       import *
 import argparse
-from   dataclasses  import dataclass, field
-from   pathlib      import Path
-from   typing       import Iterable, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Iterable, Optional
 
-import torch
-import numpy as np
 import cv2
+import numpy as np
+import torch
+
+from config import *
 
 # =============================================================================
 # DEVICE DETECTION

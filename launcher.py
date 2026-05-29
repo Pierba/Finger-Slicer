@@ -20,15 +20,11 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from tkinter import Tk, ttk, StringVar, BooleanVar, filedialog, messagebox
+from tkinter import BooleanVar, StringVar, Tk, filedialog, messagebox, ttk
 
 ROOT_DIR        = Path(__file__).parent
-# The entry-point scripts live inside the `src` package and use root-relative
-# imports (e.g. `from config import *`, `from src.gameplay.gameplay_utils import
-# *`). They must therefore be launched as modules (`python -m ...`) with the
-# project root as the working directory, not run directly by file path.
-SEGMENT_MODULE  = "src.segmentation.segment_objects"
-GAMEPLAY_MODULE = "src.gameplay.gameplay"
+SEGMENT_PATH  = str(Path("src/segmentation/segment_objects.py"))
+GAMEPLAY_PATH = str(Path("src/gameplay/gameplay.py"))
 
 # CREATE_NEW_CONSOLE is Windows-only; fall back to 0 on other platforms so the
 # script still runs (the subprocess will just inherit the current console).
@@ -158,7 +154,7 @@ class LauncherApp:
             messagebox.showerror("Invalid image", f"File not found:\n{img}")
             return
 
-        cmd = [sys.executable, "-m", SEGMENT_MODULE, img,
+        cmd = [sys.executable, SEGMENT_PATH, img,
                "--model-type", self.model_type.get()]
         if self.model_type.get() == "sam" and self.interactive.get():
             cmd.append("-i")
@@ -221,7 +217,7 @@ class LauncherApp:
     def _run_gameplay(self):
         try:
             subprocess.Popen(
-                [sys.executable, "-m", GAMEPLAY_MODULE],
+                [sys.executable, GAMEPLAY_PATH],
                 creationflags=NEW_CONSOLE_FLAG, cwd=str(ROOT_DIR))
         except Exception as exc:
             messagebox.showerror("Launch failed", str(exc))
