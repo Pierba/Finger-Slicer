@@ -92,7 +92,7 @@ HAND_HANDEDNESS_WARN   = 0.7
 # OpenCV will silently fall back to the nearest mode the camera supports
 CAM_WIDTH  = 1280
 CAM_HEIGHT = 720
-CAM_FPS    = 30
+CAM_FPS    = 60
 
 # =============================================================================
 # Gameplay

@@ -26,17 +26,20 @@ Usage
   python segment_objects.py photo.jpg --output my_dir
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
 """
+import sys
 import uuid
-from   pathlib     import Path
+from pathlib import Path
+
+# Adjust the import path to include the project root
+ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(ROOT))
 
 import cv2
 import numpy as np
+from ultralytics import SAM, YOLO
 
-from ultralytics import YOLO
-from ultralytics import SAM
-
-from config                         import *            # Constants and thresholds
-from src.segmentation.segment_utils import *     # Mask processing, cropping, saving and preview overlay functions
+from config import *                          # Constants and thresholds
+from src.segmentation.segment_utils import *  # Mask processing, cropping, saving and preview overlay functions
 
 # =============================================================================
 # YOLO AUTO MODE  (YOLO26-seg instance segmentation)

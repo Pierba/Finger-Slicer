@@ -17,18 +17,22 @@ Controls
   R         Restart (after game over)
   Q / Esc   Quit
 """
-from   typing import Optional
-
+import sys
 import time
+from pathlib import Path
+from typing import Optional
+
+# Adjust the import path to include the project root
+ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(ROOT))
 
 import cv2
+import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
 
-import mediapipe              as mp
-from   mediapipe.tasks        import python as mp_python
-from   mediapipe.tasks.python import vision as mp_vision
-
-from config                         import *
-from src.gameplay.gameplay_utils    import *
+from config import *
+from src.gameplay.gameplay_utils import *
 
 # =============================================================================
 # MAIN
