@@ -28,8 +28,6 @@ Usage
 """
 import uuid
 from   pathlib     import Path
-from   dataclasses import dataclass, field
-from   typing      import Optional
 
 import cv2
 import numpy as np
@@ -266,18 +264,6 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
 # SAM INTERACTIVE MODE  (SAM2 click-to-segment)
 # =============================================================================
 
-# class made to keep tracking the session variables
-@dataclass
-class _InteractiveState:
-    """All mutable state for the interactive session."""
-    pos_pts:      list[tuple[int, int]] = field(default_factory=list)
-    neg_pts:      list[tuple[int, int]] = field(default_factory=list)
-    current_mask: Optional[np.ndarray] = None
-    obj_count:    int = 0
-    color_idx:    int = 0
-    status:       str = "Left-click an object to start  |  right-click to exclude"
-
-
 def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
     """
     SAM2 interactive segmentation via mouse clicks.
@@ -311,7 +297,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     disp_w, disp_h = int(W * scale), int(H * scale)
 
     # == window & state ====================================================
-    state = _InteractiveState()
+    state = InteractiveState()
     WIN   = "SAM2 Interactive Segmentation"
     # WINDOW_AUTOSIZE locks the window to exactly the image dimensions we send,
     # preventing any OS-level stretching.
@@ -375,6 +361,66 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
 
     cv2.setMouseCallback(WIN, on_mouse)
 
+    def _do_segment():
+        """
+        Run SAM2 with current points and update state.current_mask.
+        """
+        if not state.pos_pts and not state.neg_pts:
+            state.status = "Add at least one point first !!!"
+            return
+
+        state.status = "Segmenting ..."
+
+        # SAM2 expects lists of points and labels, so we combine positive and negative points into single lists.
+        # The model will treat points with label 1 as "include in object" and points with label 0 as "exclude / background".
+        all_pts = state.pos_pts + state.neg_pts
+        all_lbl = [1] * len(state.pos_pts) + [0] * len(state.neg_pts)
+
+        try:
+            res = model.predict(image_path, points=[all_pts], labels=[all_lbl], device=get_device(), verbose=False)
+        except Exception as exc:
+            state.status = f"SAM2 error: {exc}"
+            return
+
+        if not res or res[0].masks is None:
+            state.status = "No mask returned — try more / different points"
+            return
+
+        masks_data = res[0].masks.data.cpu().numpy()
+        if masks_data.size == 0:
+            state.status = "No mask returned — try different points"
+            return
+
+        # If multiple masks are returned, we select the one with the largest pixel area
+        best  = int(np.argmax([m.sum() for m in masks_data]))
+        mask  = upscale_mask(masks_data[best], (W, H))
+        state.current_mask = refine_mask(mask)
+        state.status = "Mask ready — Enter to SAVE"
+
+    def _do_save():
+        """
+        Crop the current mask and save the PNG immediately as 'object_<n>.png'.
+        """
+        if state.current_mask is None:
+            state.status = "No mask yet — press S first"
+            return
+
+        crop = mask_to_rgba_crop(img, state.current_mask)
+        if crop is None:
+            print("! Empty mask — nothing saved")
+            return
+
+        name = uuid.uuid4().hex[:8]
+        path = save_interactive_images(crop, output_dir, name)
+        print(f"Saved -> {path}")
+
+        state.obj_count  += 1
+        state.color_idx  += 1
+        state.pos_pts.clear()
+        state.neg_pts.clear()
+        state.current_mask = None
+        state.status = "Saved! Click the next object."
+
     print(
         f"\n{'=' * 56}\n"
         "  Interactive SAM2 Segmentation\n"
@@ -388,6 +434,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
         "  Q / Esc      quit\n"
         f"{'=' * 56}\n"
     )
+
     redraw()
 
     # == event loop ========================================================
@@ -397,17 +444,14 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
         if key in (ord('q'), 27):       # Q or Esc to quit
             break
         elif key == ord('s'):
-            _do_segment(image_path, model, state, W, H)
-            redraw()
+            _do_segment()
         elif key in (13, 10):           # Enter (13 Windows, 10 Unix) for saving the current mask
-            _do_save(img, state, output_dir)
-            redraw()
+            _do_save()
         elif key == ord('c'):           # C to clear
             state.pos_pts.clear()
             state.neg_pts.clear()
             state.current_mask = None
             state.status = "Cleared — click a new object"
-            redraw()
         elif key == ord('z'):           # Z to undo
             if state.neg_pts:
                 state.neg_pts.pop()
@@ -415,72 +459,43 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
                 state.pos_pts.pop()
             state.current_mask = None
             state.status = "Last point removed"
-            redraw()
-
         if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
             break
+
+        redraw()
 
     cv2.destroyAllWindows()
     print(f"\n  {state.obj_count} object(s) saved to '{output_dir}/'")
 
+def main():
+    # Parse arguments
+    args = build_parser()
 
-def _do_segment(image_path: Path, model, state: _InteractiveState, W: int, H: int):
-    """
-    Run SAM2 with current points and update state.current_mask.
-    """
-    if not state.pos_pts and not state.neg_pts:
-        state.status = "Add at least one point first !!!"
+    image: Path         = args.image
+    model_type: str     = args.model_type
+    interactive: bool   = args.interactive
+    output_dir: Path    = args.output
+    conf: float         = args.conf
+    yolo_model: Path    = args.yolo_model
+    sam_model: Path     = args.sam_model
+
+    # Validate input image path
+    if not image.is_file():
+        print(f"Error: Image not found at path '{image}'")
         return
 
-    state.status = "Segmenting ..."
+    # Branch the execution based on the selected model type and mode
+    match model_type:
+        case "yolo":
+            print("Mode: YOLO AUTO  (YOLO26-seg instance segmentation)")
+            run_yolo_auto(image, output_dir, conf, yolo_model)
+        case "sam":
+            if interactive:
+                print("Mode: INTERACTIVE  (SAM2 click-to-segment)")
+                run_interactive(image, output_dir, sam_model)
+            else:
+                print("Mode: SAM AUTO  (SAM2 fully-automatic segmentation)")
+                run_sam_auto(image, output_dir, sam_model)
 
-    # SAM2 expects lists of points and labels, so we combine positive and negative points into single lists.
-    # The model will treat points with label 1 as "include in object" and points with label 0 as "exclude / background".
-    all_pts = state.pos_pts + state.neg_pts
-    all_lbl = [1] * len(state.pos_pts) + [0] * len(state.neg_pts)
-
-    try:
-        res = model.predict(image_path, points=[all_pts], labels=[all_lbl], device=get_device(), verbose=False)
-    except Exception as exc:
-        state.status = f"SAM2 error: {exc}"
-        return
-
-    if not res or res[0].masks is None:
-        state.status = "No mask returned — try more / different points"
-        return
-
-    masks_data = res[0].masks.data.cpu().numpy()
-    if masks_data.size == 0:
-        state.status = "No mask returned — try different points"
-        return
-
-    # If multiple masks are returned, we select the one with the largest pixel area
-    best  = int(np.argmax([m.sum() for m in masks_data]))
-    mask  = upscale_mask(masks_data[best], (W, H))
-    state.current_mask = refine_mask(mask)
-    state.status = "Mask ready — Enter to SAVE"
-
-
-def _do_save(img: np.ndarray, state: _InteractiveState, output_dir: Path):
-    """
-    Crop the current mask and save the PNG immediately as 'object_<n>.png'.
-    """
-    if state.current_mask is None:
-        state.status = "No mask yet — press S first"
-        return
-
-    crop = mask_to_rgba_crop(img, state.current_mask)
-    if crop is None:
-        print("! Empty mask — nothing saved")
-        return
-
-    name = uuid.uuid4().hex[:8]
-    path = save_interactive_images(crop, output_dir, name)
-    print(f"Saved -> {path}")
-
-    state.obj_count  += 1
-    state.color_idx  += 1
-    state.pos_pts.clear()
-    state.neg_pts.clear()
-    state.current_mask = None
-    state.status = "Saved! Click the next object."
+if __name__ == "__main__":
+    main()

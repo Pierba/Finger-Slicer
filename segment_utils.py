@@ -1,7 +1,8 @@
-from   config   import *
+from   config       import *
 import argparse
-from   pathlib  import Path
-from   typing   import Iterable, Optional
+from   dataclasses  import dataclass, field
+from   pathlib      import Path
+from   typing       import Iterable, Optional
 
 import torch
 import numpy as np
@@ -165,84 +166,6 @@ def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int]
     return out
 
 # =============================================================================
-# GAMEPLAY HELPERS  (sprite rotation + alpha-compositing onto the webcam frame)
-# =============================================================================
-
-def trim_rgba(sprite: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Crop an RGBA sprite tightly to the bounding box of its non-zero alpha pixels.
-    Source PNGs are written at 512x512 with lots of transparent padding from
-    fit_to_canvas(); this strips that padding so projectiles get a tight hitbox
-    and rotate around their actual visual centre.
-    Returns None if the alpha channel is fully empty.
-    """
-    if sprite.ndim != 3 or sprite.shape[2] < 4:
-        return sprite
-    ys, xs = np.where(sprite[:, :, 3] > 0)
-    if len(xs) == 0:
-        return None
-    return sprite[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
-
-
-def rotate_rgba(sprite: np.ndarray, angle_deg: float) -> np.ndarray:
-    """
-    Rotate `sprite` (BGRA) around its centre by `angle_deg` degrees and expand
-    the output canvas so the rotated image fits without any corner clipping.
-    New pixels exposed by the rotation are fully transparent (alpha = 0).
-    """
-    h, w = sprite.shape[:2]
-    M    = cv2.getRotationMatrix2D((w / 2, h / 2), angle_deg, 1.0)
-
-    # Expand canvas: the rotated bounding box is larger than the original.
-    cos, sin = abs(M[0, 0]), abs(M[0, 1])
-    new_w    = int(h * sin + w * cos)
-    new_h    = int(h * cos + w * sin)
-
-    # Shift so the rotated image is centred inside the expanded canvas.
-    M[0, 2] += new_w / 2 - w / 2
-    M[1, 2] += new_h / 2 - h / 2
-
-    return cv2.warpAffine(
-        sprite, M, (new_w, new_h),
-        flags=cv2.INTER_LINEAR,
-        borderMode=cv2.BORDER_CONSTANT,
-        borderValue=(0, 0, 0, 0),
-    )
-
-
-def blit_rgba(frame_bgr: np.ndarray, sprite_bgra: np.ndarray, cx: int, cy: int) -> None:
-    """
-    Alpha-composite `sprite_bgra` onto `frame_bgr` in place, centred at (cx, cy).
-    Handles clipping at all four frame edges; no-op if the sprite is fully off-screen.
-    """
-    sh, sw = sprite_bgra.shape[:2]
-    fh, fw = frame_bgr.shape[:2]
-
-    # Target rect in frame coordinates.
-    x0, y0 = cx - sw // 2, cy - sh // 2
-    x1, y1 = x0 + sw, y0 + sh
-
-    # Clip target to the frame, mirroring the clip back onto the source rect.
-    src_x0 = max(0, -x0)
-    src_y0 = max(0, -y0)
-    src_x1 = sw - max(0, x1 - fw)
-    src_y1 = sh - max(0, y1 - fh)
-    if src_x1 <= src_x0 or src_y1 <= src_y0:
-        return
-
-    dst_x0, dst_y0 = max(0, x0), max(0, y0)
-    dst_x1 = dst_x0 + (src_x1 - src_x0)
-    dst_y1 = dst_y0 + (src_y1 - src_y0)
-
-    sprite_clip = sprite_bgra[src_y0:src_y1, src_x0:src_x1]
-    alpha       = sprite_clip[:, :, 3:4].astype(np.float32) / 255.0
-    bgr_src     = sprite_clip[:, :, :3].astype(np.float32)
-
-    roi = frame_bgr[dst_y0:dst_y1, dst_x0:dst_x1]
-    np.copyto(roi, (bgr_src * alpha + roi.astype(np.float32) * (1.0 - alpha)).astype(np.uint8))
-
-
-# =============================================================================
 # CANVAS UTILITIES
 # =============================================================================
 
@@ -270,6 +193,21 @@ def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = S
     canvas[y_off:y_off + new_h, x_off:x_off + new_w] = resized
 
     return canvas
+
+# =============================================================================
+# INTERACTIVE SESSION STATE
+# =============================================================================
+
+@dataclass
+class InteractiveState:
+    """All mutable state for the interactive session."""
+    pos_pts:      list[tuple[int, int]] = field(default_factory=list)
+    neg_pts:      list[tuple[int, int]] = field(default_factory=list)
+    current_mask: Optional[np.ndarray] = None
+    obj_count:    int = 0
+    color_idx:    int = 0
+    status:       str = "Left-click an object to start  |  right-click to exclude"
+
 
 # =============================================================================
 # SAVE IMAGES [INTERACTIVE MODE]
