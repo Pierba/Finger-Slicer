@@ -1,21 +1,10 @@
 """
 Finger Slicer Launcher GUI
 ==========================
-CustomTkinter front-end that collects the user's choices and shells out to the
-existing entry-point scripts:
+Window GUI for launching the two main components of the Finger Slicer project:
 
   src/segmentation/segment_objects.py   produce RGBA sprites from a source image
   src/gameplay/gameplay.py              play the Fruit-Ninja-style slicing game
-
-Flow
-----
-  Home  ->  Segment Objects  ->  pick model (YOLO / SAM)
-                              ->  if SAM: auto or interactive
-                              ->  browse for image
-                              ->  Start Segmentation (new console)
-                              ->  on exit: enable "Play Game"
-        ->  Play Game         ->  launches gameplay.py in a new console,
-                                  then closes the launcher menu
 """
 import subprocess
 import sys
@@ -25,34 +14,32 @@ from tkinter import BooleanVar, StringVar, filedialog, messagebox
 
 import customtkinter as ctk
 
+# Paths to the main programs
 ROOT_DIR        = Path(__file__).parent
-SEGMENT_PATH  = str(Path("src/segmentation/segment_objects.py"))
-GAMEPLAY_PATH = str(Path("src/gameplay/gameplay.py"))
+SEGMENT_PATH    = str(Path("src/segmentation/segment_objects.py"))
+GAMEPLAY_PATH   = str(Path("src/gameplay/gameplay.py"))
 
-# CREATE_NEW_CONSOLE is Windows-only; fall back to 0 on other platforms so the
-# script still runs (the subprocess will just inherit the current console).
+# CREATE_NEW_CONSOLE is Windows-only, it falls back to 0 on other platforms so the script still runs
 NEW_CONSOLE_FLAG = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
-# --- modern look-and-feel ----------------------------------------------------
-ctk.set_appearance_mode("dark")        # dark only, for a clean modern look
-ctk.set_default_color_theme("blue")    # built-in accent palette
+# --- modern aesthetic ----------------------------------------------------
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
-# A friendly green used for the "ready / go" affordances.
+# A friendly green used for the "ready/go" actions
 ACCENT_GREEN       = "#2FA572"
 ACCENT_GREEN_HOVER = "#26895E"
 
 
 class LauncherApp:
     def __init__(self, root: ctk.CTk):
+        # Window setup
         self.root = root
         root.title("Finger Slicer Launcher")
-        # Height is sized for the tallest screen (Segment + SAM mode card shown)
-        # so the "Interactive" option never gets clipped.
         root.geometry("560x630")
-        root.minsize(560, 630)
         root.resizable(False, False)
 
-        # Shared fonts (created after the root window exists).
+        # Window elements fonts
         self.font_title    = ctk.CTkFont(family="Segoe UI", size=32, weight="bold")
         self.font_subtitle = ctk.CTkFont(family="Segoe UI", size=14)
         self.font_heading  = ctk.CTkFont(family="Segoe UI", size=22, weight="bold")
@@ -60,29 +47,30 @@ class LauncherApp:
         self.font_body     = ctk.CTkFont(family="Segoe UI", size=13)
         self.font_button   = ctk.CTkFont(family="Segoe UI", size=14, weight="bold")
 
-        # User selections
+        # User variables
         self.image_path  = StringVar(value="")
         self.model_type  = StringVar(value="yolo")
         self.interactive = BooleanVar(value=False)
 
-        # Handle of the running segmentation process (used to re-enable the
-        # Play button once it exits).
+        # Handle of the running segmentation process (used to re-enable the Play button once it exits)
         self._segment_proc: subprocess.Popen | None = None
 
+        # Main container for swapping different screens
         self.container = ctk.CTkFrame(root, corner_radius=0, fg_color="transparent")
         self.container.pack(fill="both", expand=True, padx=28, pady=24)
         self._show_home()
 
     # =========================================================================
-    # screen helpers
+    # SCREEN COMPONENTS
     # =========================================================================
 
+    # Remove all widgets from the main container for showing a new screen
     def _clear(self):
         for w in self.container.winfo_children():
             w.destroy()
 
-    def _card(self, title: str, pack: bool = True):
-        """A rounded panel with a small section header; returns (card, body)."""
+    # Returns a rounded panel with a small section header
+    def _card(self, title: str, pack: bool = True) -> tuple[ctk.CTkFrame, ctk.CTkFrame]:
         card = ctk.CTkFrame(self.container, corner_radius=14)
         if pack:
             card.pack(fill="x", pady=8)
@@ -99,7 +87,7 @@ class LauncherApp:
     def _show_home(self):
         self._clear()
 
-        ctk.CTkLabel(self.container, text="🔪  Finger Slicer",
+        ctk.CTkLabel(self.container, text="Finger Slicer",
                      font=self.font_title).pack(pady=(48, 4))
         ctk.CTkLabel(self.container, text="Choose a program to launch",
                      font=self.font_subtitle,
@@ -119,6 +107,7 @@ class LauncherApp:
 
     def _show_segment(self):
         self._clear()
+
         ctk.CTkLabel(self.container, text="Segment Objects",
                      font=self.font_heading).pack(anchor="w", pady=(4, 14))
 
@@ -153,8 +142,7 @@ class LauncherApp:
 
         # --- SAM sub-options (shown only when SAM is selected) ----------------
         self.sam_card, sam_body = self._card("SAM mode", pack=False)
-        self.sam_mode = StringVar(
-            value="auto" if not self.interactive.get() else "interactive")
+        self.sam_mode = StringVar(value="auto" if not self.interactive.get() else "interactive")
         ctk.CTkRadioButton(sam_body, text="Auto  (fully automatic)", value="auto",
                            variable=self.sam_mode, font=self.font_body,
                            command=self._sync_interactive).pack(anchor="w", pady=4)
@@ -164,16 +152,18 @@ class LauncherApp:
                            command=self._sync_interactive).pack(anchor="w", pady=4)
         self._update_modes()
 
+    # Show or hide SAM options depending on the selected model type
     def _update_modes(self):
-        """Show or hide the SAM sub-options depending on the chosen model."""
         if self.model_type.get() == "sam":
             self.sam_card.pack(fill="x", pady=8)
         else:
             self.sam_card.pack_forget()
 
+    # Synchronize the interactive flag with the SAM mode
     def _sync_interactive(self):
         self.interactive.set(self.sam_mode.get() == "interactive")
 
+    # Open a file dialog to pick an image and save its path
     def _pick_image(self):
         path = filedialog.askopenfilename(
             title="Select an image",
@@ -190,7 +180,8 @@ class LauncherApp:
     # =========================================================================
 
     def _run_segmentation(self):
-        img = self.image_path.get().strip()
+        # Validate the image path before launching the segmentation scripts
+        img = self.image_path.get()
         if not img:
             messagebox.showwarning("Missing image", "Please choose an image first.")
             return
@@ -198,11 +189,12 @@ class LauncherApp:
             messagebox.showerror("Invalid image", f"File not found:\n{img}")
             return
 
-        cmd = [sys.executable, SEGMENT_PATH, img,
-               "--model-type", self.model_type.get()]
+        # Build the command line arguments for running the segmentation script based on user choices
+        cmd = [sys.executable, SEGMENT_PATH, img, "--model-type", self.model_type.get()]
         if self.model_type.get() == "sam" and self.interactive.get():
             cmd.append("-i")
 
+        # Launch the segmentation script in a new console window so it can show its own output
         try:
             self._segment_proc = subprocess.Popen(
                 cmd, creationflags=NEW_CONSOLE_FLAG, cwd=str(ROOT_DIR))
@@ -210,18 +202,18 @@ class LauncherApp:
             messagebox.showerror("Launch failed", str(exc))
             return
 
-        self._show_segment_running()
         # Watch the process so we can flip the Play button on once it exits.
+        self._show_segment_running()
         threading.Thread(target=self._wait_for_segment, daemon=True).start()
 
     def _show_segment_running(self):
         self._clear()
+
         ctk.CTkLabel(self.container, text="Segmentation Running",
                      font=self.font_heading).pack(pady=(40, 12))
         ctk.CTkLabel(self.container,
                      text="The segmentation script is running in a separate console.\n"
-                          "Close it when you're done — the Play Game button will\n"
-                          "light up as soon as it exits.",
+                          "The Play Game button will light up as soon as it exits.\n",
                      font=self.font_body, justify="center",
                      text_color="gray65").pack(pady=(0, 24))
 
@@ -248,18 +240,17 @@ class LauncherApp:
         if self._segment_proc is None:
             return
         self._segment_proc.wait()
-        # Hop back to the Tk main thread to touch widgets.
         self.root.after(0, self._segment_finished)
 
     def _segment_finished(self):
-        # The user may have navigated away in the meantime.
+        # The user may have navigated away in the meantime
         if not hasattr(self, "play_btn") or not self.play_btn.winfo_exists():
             return
         self.progress.stop()
         self.progress.configure(mode="determinate")
         self.progress.set(1.0)
         self.progress.configure(progress_color=ACCENT_GREEN)
-        self.status_lbl.configure(text="✓  Segmentation finished — ready to play.",
+        self.status_lbl.configure(text="✓  Segmentation finished, you are ready to play.",
                                   text_color=ACCENT_GREEN)
         self.play_btn.configure(state="normal")
 
@@ -276,9 +267,7 @@ class LauncherApp:
             messagebox.showerror("Launch failed", str(exc))
             return
 
-        # The game runs in its own console, so the launcher menu has done its
-        # job — close it. (Any pending segmentation watcher is a daemon thread
-        # and dies with the process; the segmentation console keeps running.)
+        # Launcher menu can be closed
         self.root.destroy()
 
 
