@@ -26,20 +26,19 @@ Usage
   python segment_objects.py photo.jpg --output my_dir
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
 """
-import sys
-import uuid
 from pathlib import Path
+import sys
 
 # Adjust the import path to include the project root
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
+from config import *                          
 import cv2
 import numpy as np
+from src.segmentation.segment_utils import *
 from ultralytics import SAM, YOLO
-
-from config import *                          # Constants and thresholds
-from src.segmentation.segment_utils import *  # Mask processing, cropping, saving and preview overlay functions
+import uuid
 
 # =============================================================================
 # YOLO AUTO MODE  (YOLO26-seg instance segmentation)
@@ -47,11 +46,23 @@ from src.segmentation.segment_utils import *  # Mask processing, cropping, savin
 
 def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF, model_name: Path = DEFAULT_YOLO_MODEL):
     """
-    Detect and segment objects with YOLO26x-seg (default model).
+    Detects and segments objects present in `image_path` with YOLO26x-seg (default model) - or any 
+    other `model_name` - using the given `conf` threshold.
     For each detection the pipeline is:
-      raw mask -> upscale -> binarise -> morphological refinement ->
-      -> alpha crop (transparent background) -> save PNG
-    The preview image (_preview_auto.png) is also saved.
+    - raw mask
+    - upscale
+    - binarise
+    - morphological refinement
+    - alpha crop
+    - save PNG
+    
+    Eventually the preview image is also saved in `output_dir`.
+
+    Args:
+        image_path: path to the input image file.
+        output_dir: path to the output directory.
+        conf: confidence threshold for detection.
+        model_name: path to the YOLO model file.
     """
     # Create output directory if it doesn't exist.
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -128,29 +139,33 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
 
 def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
     """
-    Automatically segment all objects in `image_path` using SAM2.
+    Automatically segments all objects in `image_path` using SAM2 (default model) or any other `model_name`.
+    Unlike YOLO, SAM2 has no concept of object classes, therefore it returns every mask it finds.
+    Each raw mask is first cleaned up, then it goes through 
+    three filtering steps to remove noise and duplicates:
+    - Upscale       upscale_mask() resizes to original dimensions with bilinear
+                    interpolation + re-threshold.
+    
+    - Refine        refine_mask() closes holes, removes specks, and keeps only
+                    the largest connected component.
 
-    Unlike run_yolo_auto, SAM2 has no concept of object classes: it returns every mask it finds.
-    Each raw mask is first cleaned up, then three
-    filtering passes remove noise and duplicates:
-
-      Upscale       upscale_mask() resizes to original dimensions with bilinear
-                    interpolation + re-threshold (smoother edges than NEAREST).
-
-      Refine        refine_mask() closes holes, removes specks, and keeps only
-                    the largest connected component — runs before any filter so
-                    all downstream comparisons operate on clean masks.
-
-      1. Size       drops masks whose bounding box is smaller than
+    - Size          drops masks whose bounding box is smaller than
                     SMALL_OBJECT_THRESHOLD in either dimension.
-      2. Background drops masks whose actual pixel count exceeds
+    
+    - Background    drops masks whose actual pixel count is greater than
                     BACKGROUND_THRESHOLD of the total image pixel area.
-      3. Sub-part   sorts survivors by pixel area (largest first); if a
+    
+    - Sub-part      sorts survivors by pixel area in descending order; if a
                     smaller mask's pixel-level intersection with a larger one
                     exceeds SUBPART_OVERLAP_THRESHOLD it is discarded.
 
-    Surviving objects are saved as transparent PNGs and a composite preview
-    (_preview_sam_auto.png) is written to `out_dir`.
+    Surviving objects are saved as transparent PNGs and the preview image
+    (_preview_sam_auto.png) is saved in `out_dir`.
+
+    Args:
+        image_path: path to the input image file.
+        output_dir: path to the output directory.
+        model_name: path to the SAM model file.
     """
     # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -269,17 +284,16 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
 
 def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
     """
-    SAM2 interactive segmentation via mouse clicks.
-
-    Controls
-    --------
-    Left-click   Positive point (include in object)
-    Right-click  Negative point (exclude / background)
-    S            Run SAM2 segmentation with current points
-    Enter        Save current mask as transparent PNG
-    N            Clear points & mask - retry current object
-    U            Undo last point
-    Q / Esc      Quit
+    SAM2 interactive segmentation via mouse clicks and keyboard actions.
+    
+    Controls:
+    - Left-click   Positive point (include in object)
+    - Right-click  Negative point (exclude / background)
+    - S            Run SAM2 segmentation with current points
+    - Enter        Save current mask as transparent PNG
+    - N            Clear points & mask - retry current object
+    - U            Undo last point
+    - Q / Esc      Quit
     """
     # Create output directory if it doesn't exist.
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -309,7 +323,11 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     # == HUD rendering ====================================================
     def draw_hud(canvas: np.ndarray, lines: list[str]):
         """
-        Render text lines with a black backing rectangle onto `canvas` in-place.
+        Renders text `lines` with a black backing rectangle onto `canvas` in-place.
+
+        Args:
+            canvas: the image to draw on.
+            lines: list of text lines to render.
         """
         font, scale, thick, pad = cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1, 4  # HUD text style params
         y = 20  # initial y position for the first line
@@ -323,6 +341,9 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     
     # == drawing the window ================================================
     def redraw():
+        """
+        Renders: current state, current mask and click points onto the display window.
+        """
         # Compose overlays at full resolution for maximum mask quality
         canvas = img.copy()
         if state.current_mask is not None:
@@ -364,9 +385,10 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
 
     cv2.setMouseCallback(WIN, on_mouse)
 
+    # == segmentation logic ================================================
     def _do_segment():
         """
-        Run SAM2 with current points and update state.current_mask.
+        Runs SAM2 with current points and updates the current mask.
         """
         if not state.pos_pts and not state.neg_pts:
             state.status = "Add at least one point first !!!"
@@ -400,23 +422,27 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
         state.current_mask = refine_mask(mask)
         state.status = "Mask ready — Enter to SAVE"
 
+    # == save logic ================================================
     def _do_save():
         """
-        Crop the current mask and save the PNG immediately as 'object_<n>.png'.
+        Crops the current mask and saves the PNG as 'object_<n>.png'.
         """
         if state.current_mask is None:
             state.status = "No mask yet — press S first"
             return
 
+        # The mask crop is done at full resolution to preserve the pixel-precise quality of SAM's output
         crop = mask_to_rgba_crop(img, state.current_mask)
         if crop is None:
             print("! Empty mask — nothing saved")
             return
 
+        # Saving the image with a unique name to avoid overwriting issues
         name = uuid.uuid4().hex[:8]
         path = save_interactive_images(crop, output_dir, name)
         print(f"Saved -> {path}")
 
+        # Updating the state for the next segmentation
         state.obj_count  += 1
         state.color_idx  += 1
         state.pos_pts.clear()
@@ -424,12 +450,13 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
         state.current_mask = None
         state.status = "Saved! Click the next object."
 
+    # == initial instructions =================================================
     print(
         f"\n{'=' * 56}\n"
         "  Interactive SAM2 Segmentation\n"
         f"{'=' * 56}\n"
         "  Left-click   mark OBJECT  (green)\n"
-        "  Right-click  mark BACKGROUND  (blue)\n"
+        "  Right-click  mark BACKGROUND  (red)\n"
         "  S            segment\n"
         "  Enter        save as transparent PNG\n"
         "  C            clear & retry\n"
@@ -438,23 +465,27 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
         f"{'=' * 56}\n"
     )
 
+    # Initial render before any interaction
     redraw()
 
     # == event loop ========================================================
     while True:
-        key = cv2.waitKey(40) & 0xFF
+        key = cv2.waitKey(40) & 0xFF    # Getting the ASCII code of the pressed key
 
         if key in (ord('q'), 27):       # Q or Esc to quit
             break
-        elif key == ord('s'):
+        elif key == ord('s'):           # S to segment
             _do_segment()
+            redraw()
         elif key in (13, 10):           # Enter (13 Windows, 10 Unix) for saving the current mask
             _do_save()
+            redraw()
         elif key == ord('c'):           # C to clear
             state.pos_pts.clear()
             state.neg_pts.clear()
             state.current_mask = None
             state.status = "Cleared — click a new object"
+            redraw()
         elif key == ord('z'):           # Z to undo
             if state.neg_pts:
                 state.neg_pts.pop()
@@ -462,15 +493,18 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
                 state.pos_pts.pop()
             state.current_mask = None
             state.status = "Last point removed"
+            redraw()
+        
         if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
             break
-
-        redraw()
 
     cv2.destroyAllWindows()
     print(f"\n  {state.obj_count} object(s) saved to '{output_dir}/'")
 
 def main():
+    """
+    Main function to parse command-line arguments and run the segmentation modes based on user input.
+    """
     # Parse arguments
     args = build_parser()
 

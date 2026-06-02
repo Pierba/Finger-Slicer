@@ -1,13 +1,22 @@
+"""
+Object Segmentation Utilities
+======================================
+This module contains utility functions and classes for object segmentation tasks, including:
+    - Device detection for PyTorch (GPU, MPS, CPU)
+    - Command-line argument parsing for segmentation scripts
+    - Image and mask processing helpers (resizing, refining, overlaying)
+    - Canvas fitting for consistent output image sizes
+    - State management class for interactive segmentation sessions
+    - Functions for saving segmented objects as transparent PNGs
+"""
 import argparse
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Iterable, Optional
-
+from   config       import *
 import cv2
+from   dataclasses  import dataclass, field
 import numpy as np
+from   pathlib      import Path
 import torch
-
-from config import *
+from   typing       import Iterable, Optional
 
 # =============================================================================
 # DEVICE DETECTION
@@ -15,9 +24,9 @@ from config import *
 
 def get_device() -> torch.device:
     """
-    Returns the appropriate (best) device (GPU, MPS, or CPU) for PyTorch operations.
+    Returns:
+        the appropriate device (GPU, MPS, or CPU based on user hardware) to be used for model results.
     """
-
     if torch.cuda.is_available():
         return torch.device("cuda")
     elif torch.backends.mps.is_available():
@@ -29,6 +38,10 @@ def get_device() -> torch.device:
 # =============================================================================
 
 def build_parser() -> argparse.Namespace:
+    """
+    Returns:
+        the arguments passed by the user with the CLI, used for segmentation script.
+    """
     p = argparse.ArgumentParser()
     p.add_argument(
         "image",
@@ -84,8 +97,14 @@ def build_parser() -> argparse.Namespace:
 
 def upscale_mask(raw: np.ndarray, target_wh: tuple[int, int]) -> np.ndarray:
     """
-    Resize a float/uint8 raw mask to `target_wh` (W, H) and re-binarise.
-    Returns a uint8 mask with values [0, 255].
+    Resizes a float/uint8 raw `mask` to `target_wh` dimensions and makes it binary.
+
+    Args:
+        raw: a float or uint8 mask (H, W) with values in [0, 1] or [0, 255].
+        target_wh: desidered scale for the output mask.
+
+    Returns:
+        A uint8 binary mask (H, W) with values 0 or 255, scaled to target_wh.
     """ 
 
     resized = cv2.resize(
@@ -99,10 +118,13 @@ def upscale_mask(raw: np.ndarray, target_wh: tuple[int, int]) -> np.ndarray:
 
 def refine_mask(mask: np.ndarray) -> np.ndarray:
     """
-    Morphological clean-up:
-      1. Close  - fills small holes inside the object
-      2. Open   - removes isolated specks outside the object
-      3. Largest component - drops disconnected fragments
+    Clean up a binary `mask` by filling holes, removing small noise, and keeping only the largest connected component.
+
+    Args:
+        mask: a binary uint8 mask (H, W) with values in [0, 255].
+
+    Returns:
+        A cleaned binary uint8 mask (H, W) with values in [0, 255].
     """
 
     # Elliptical elements created to clear the possible noise 
@@ -128,9 +150,16 @@ def refine_mask(mask: np.ndarray) -> np.ndarray:
 
 def mask_to_rgba_crop(img_bgr: np.ndarray, mask: np.ndarray) -> Optional[np.ndarray]:
     """
-    Apply `mask` as the alpha channel of `img_bgr`,
-    then crop tightly to the non-zero region.
-    Returns an RGBA ndarray or None if the mask is empty.
+    Applies a binary `mask` to a BGR image (`img_bgr`) and returns a cropped RGBA image 
+    where the masked area is visible while the rest is transparent.
+
+    Args:
+        img_bgr: a BGR image (H, W, 3) as a uint8 array.
+        mask: a binary uint8 mask (H, W) with values in [0, 255].
+
+    Returns:
+        A cropped RGBA image (h, w, 4) where the masked area is visible and the rest is transparent. 
+        Returns None if the mask has no non-zero pixels.
     """
 
     # Converts the BGR image to RGBA format
@@ -151,7 +180,16 @@ def mask_to_rgba_crop(img_bgr: np.ndarray, mask: np.ndarray) -> Optional[np.ndar
 
 def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int], alpha: float = 0.45) -> np.ndarray:
     """
-    Return a copy of `base` with a translucent coloured `mask` overlay.
+    Returns a BGR image with a binary `mask` overlaid on top of a `base` image, using a given `color` and `alpha` transparency.
+    
+    Args:
+        base: a BGR image (H, W, 3) as a uint8 array.
+        mask: a binary uint8 mask (H, W) with values in [0, 255].
+        color: a tuple of (B, G, R) values for the overlay color.
+        alpha: a float in [0, 1] representing the transparency of the overlay (default: 0.45).
+
+    Returns:
+        A BGR image (H, W, 3) with the mask area overlaid in the specified color and transparency.
     """
     out = base.copy()
 
@@ -172,22 +210,29 @@ def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int]
 
 def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = SAVE_IMG_H) -> np.ndarray:
     """
-    Scale `crop_rgba` (RGBA) to fit inside an `out_w` x `out_h` canvas while
-    preserving aspect ratio, centre it, and pad the remainder with full
-    transparency (alpha = 0).
-
+    Scales `crop_rgba` (RGBA) to fit inside an `out_w` x `out_h` canvas while preserving its aspect ratio.
     Downscaling uses INTER_AREA (best quality for shrinking).
     Upscaling uses INTER_LANCZOS4 (best quality for enlarging small objects).
 
-    Returns a (out_h, out_w, 4) uint8 RGBA array.
+    Args:
+        crop_rgba: an RGBA image (h, w, 4) as a uint8 array.
+        out_w: output width of the canvas (default: SAVE_IMG_W).
+        out_h: output height of the canvas (default: SAVE_IMG_H).
+
+    Returns:
+        A RGBA image (out_h, out_w, 4) as uint8 array.
     """
+    # Calculating the scaling factor
     h, w = crop_rgba.shape[:2]
     scale   = min(out_w / w, out_h / h)
     new_w   = int(w * scale)
     new_h   = int(h * scale)
+
+    # Choosing interpolation method based on whether we are upscaling or downscaling
     interp  = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4
     resized = cv2.resize(crop_rgba, (new_w, new_h), interpolation=interp)
 
+    # Creating a transparent canvas and centering the resized image applied to it
     canvas       = np.zeros((out_h, out_w, 4), dtype=np.uint8)
     x_off        = (out_w - new_w) // 2
     y_off        = (out_h - new_h) // 2
@@ -201,13 +246,15 @@ def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = S
 
 @dataclass
 class InteractiveState:
-    """All mutable state for the interactive session."""
-    pos_pts:      list[tuple[int, int]] = field(default_factory=list)
-    neg_pts:      list[tuple[int, int]] = field(default_factory=list)
-    current_mask: Optional[np.ndarray] = None
-    obj_count:    int = 0
-    color_idx:    int = 0
-    status:       str = "Left-click an object to start  |  right-click to exclude"
+    """
+    All mutable variables for the interactive session.
+    """
+    pos_pts:      list[tuple[int, int]] = field(default_factory=list)       # List of (x, y) coordinates for object points (positive clicks)
+    neg_pts:      list[tuple[int, int]] = field(default_factory=list)       # List of (x, y) coordinates for background points (negative clicks)
+    current_mask: Optional[np.ndarray] = None                               # The current mask being previewed  
+    obj_count:    int = 0                                                   # Counter for segmented objects
+    color_idx:    int = 0                                                   # Index for cycling through overlay colors in the palette                             
+    status:       str = "Left-click to include  |  Right-click to exclude"  # Current status message to display on the window
 
 
 # =============================================================================
@@ -215,8 +262,16 @@ class InteractiveState:
 # =============================================================================
 def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) -> str:
     """
-    Fit the crop onto a fixed canvas, then write it as a transparent PNG.
-    Returns the path to the saved PNG.
+    Fits the `crop_rgba` onto a fixed SAVE_IMG_W x SAVE_IMG_H canvas and 
+    saves it as a transparent PNG in `output_dir` with the given `name`.
+
+    Args:
+        crop_rgba: an RGBA image (h, w, 4) as a uint8 array to be saved.
+        output_dir: the directory where the PNG file will be saved.
+        name: the filename (without extension) for the saved PNG.
+    
+    Returns:
+        The path to the saved PNG file.
     """
     canvas = fit_to_canvas(crop_rgba)
    
@@ -232,13 +287,14 @@ def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) 
 
 def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]], output_dir: Path):
     """
-    For each (filename, crop_rgba) pair:
-      1. Fit the crop onto a fixed SAVE_IMG_W x SAVE_IMG_H canvas 
-         (aspect-ratio preserving, centred, transparent padding) via fit_to_canvas().
-      2. Preview the canvas blended over a checkerboard in a fixed-size window —
-         no more giant preview windows regardless of the source image resolution.
-      3. On Y, write the fixed-size canvas as a transparent PNG; any other key
-         skips it.
+    For each (filename, crop_rgba) pair in `object_stream`:
+    - Fits the crop onto a fixed SAVE_IMG_W x SAVE_IMG_H canvas.
+    - Shows the canvas blended over a checkerboard in a fixed-size window.
+    - On Y, saves the canvas as a transparent PNG in `output_dir`, else it skips it.
+    
+    Args:
+        object_stream: an iterable of (filename, crop_rgba) pairs.
+        output_dir: the directory where the PNG files will be saved.
     """
     def _create_checkerboard(h: int, w: int, square_size: int = 20) -> np.ndarray:
         """

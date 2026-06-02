@@ -6,13 +6,12 @@ Window GUI for launching the two main components of the Finger Slicer project:
   src/segmentation/segment_objects.py   produce RGBA sprites from a source image
   src/gameplay/gameplay.py              play the Fruit-Ninja-style slicing game
 """
+import customtkinter as ctk
 import subprocess
 import sys
-import threading
 from pathlib import Path
+import threading
 from tkinter import BooleanVar, StringVar, filedialog, messagebox
-
-import customtkinter as ctk
 
 # Paths to the main programs
 ROOT_DIR        = Path(__file__).parent
@@ -22,17 +21,25 @@ GAMEPLAY_PATH   = str(Path("src/gameplay/gameplay.py"))
 # CREATE_NEW_CONSOLE is Windows-only, it falls back to 0 on other platforms so the script still runs
 NEW_CONSOLE_FLAG = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
-# --- modern aesthetic ----------------------------------------------------
+# === modern aesthetic ====================================================               
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
-# A friendly green used for the "ready/go" actions
+# Friendly green used for the "ready/go" actions
 ACCENT_GREEN       = "#2FA572"
 ACCENT_GREEN_HOVER = "#26895E"
 
-
 class LauncherApp:
+    """
+    Application class for the Finger Slicer Launcher GUI built using CustomTkinter.
+    """
     def __init__(self, root: ctk.CTk):
+        """
+        Initialization of the launcher app and its main window components.
+
+        Args:
+            root: The main Tkinter window that will hold all the UI elements.
+        """
         # Window setup
         self.root = root
         root.title("Finger Slicer Launcher")
@@ -52,7 +59,7 @@ class LauncherApp:
         self.model_type  = StringVar(value="yolo")
         self.interactive = BooleanVar(value=False)
 
-        # Handle of the running segmentation process (used to re-enable the Play button once it exits)
+        # Handler variable for running segmentation process
         self._segment_proc: subprocess.Popen | None = None
 
         # Main container for swapping different screens
@@ -64,20 +71,38 @@ class LauncherApp:
     # SCREEN COMPONENTS
     # =========================================================================
 
-    # Remove all widgets from the main container for showing a new screen
     def _clear(self):
+        """
+        Removes all widgets from the main container in order to show a new screen.
+        """
         for w in self.container.winfo_children():
             w.destroy()
 
-    # Returns a rounded panel with a small section header
     def _card(self, title: str, pack: bool = True) -> tuple[ctk.CTkFrame, ctk.CTkFrame]:
+        """
+        Returns a rounded panel with a small section header and a body frame for content.
+
+        Args:
+            title: The text to show in the section header of the card.
+            pack: Whether to pack the card into the container immediately or let the caller do it.
+        
+        Returns:
+            A tuple of (card_frame, body_frame) where card_frame is the outer rounded panel and
+            body_frame is the inner frame where content can be placed.
+        """
         card = ctk.CTkFrame(self.container, corner_radius=14)
+        
+        # Choose to pack the card immediately or do it later when 
+        # having content ready to avoid empty cards in the UI
         if pack:
             card.pack(fill="x", pady=8)
+        
         ctk.CTkLabel(card, text=title.upper(), font=self.font_section,
                      text_color="gray60").pack(anchor="w", padx=18, pady=(14, 0))
+        
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="x", padx=18, pady=(6, 16))
+        
         return card, body
 
     # =========================================================================
@@ -85,6 +110,9 @@ class LauncherApp:
     # =========================================================================
 
     def _show_home(self):
+        """
+        Shows the home screen with options to launch segmentation or gameplay scripts.
+        """
         self._clear()
 
         ctk.CTkLabel(self.container, text="Finger Slicer",
@@ -106,6 +134,14 @@ class LauncherApp:
     # =========================================================================
 
     def _show_segment(self):
+        """
+        Shows the segmentation settings screen.
+
+        The user can choose:
+        - Input image
+        - Segmentation model type 
+        - Whether to use interactive mode for SAM if selected 
+        """
         self._clear()
 
         ctk.CTkLabel(self.container, text="Segment Objects",
@@ -114,16 +150,18 @@ class LauncherApp:
         # Actions anchored to the bottom so the rest of the form stacks above.
         action = ctk.CTkFrame(self.container, fg_color="transparent")
         action.pack(side="bottom", fill="x", pady=(18, 0))
+
         ctk.CTkButton(action, text="← Back", width=110, height=42, corner_radius=10,
                       font=self.font_button, fg_color="transparent", border_width=2,
                       text_color="gray90",
                       command=self._show_home).pack(side="left")
+        
         ctk.CTkButton(action, text="Start Segmentation", width=180, height=42,
                       corner_radius=10, font=self.font_button,
                       fg_color=ACCENT_GREEN, hover_color=ACCENT_GREEN_HOVER,
                       command=self._run_segmentation).pack(side="right")
 
-        # --- image picker -----------------------------------------------------
+        # === image picker =====================================================     
         _, img_body = self._card("Image")
         ctk.CTkEntry(img_body, textvariable=self.image_path, height=38,
                      corner_radius=8, placeholder_text="No image selected").pack(
@@ -131,7 +169,7 @@ class LauncherApp:
         ctk.CTkButton(img_body, text="Browse…", width=96, height=38, corner_radius=8,
                       font=self.font_button, command=self._pick_image).pack(side="left")
 
-        # --- model selection --------------------------------------------------
+        # === model selection ==================================================
         _, model_body = self._card("Model")
         ctk.CTkRadioButton(model_body, text="YOLO  (auto instance segmentation)",
                            value="yolo", variable=self.model_type, font=self.font_body,
@@ -140,7 +178,7 @@ class LauncherApp:
                            variable=self.model_type, font=self.font_body,
                            command=self._update_modes).pack(anchor="w", pady=4)
 
-        # --- SAM sub-options (shown only when SAM is selected) ----------------
+        # === SAM sub-options (shown only when SAM is selected) ================
         self.sam_card, sam_body = self._card("SAM mode", pack=False)
         self.sam_mode = StringVar(value="auto" if not self.interactive.get() else "interactive")
         ctk.CTkRadioButton(sam_body, text="Auto  (fully automatic)", value="auto",
@@ -150,21 +188,29 @@ class LauncherApp:
                            value="interactive", variable=self.sam_mode,
                            font=self.font_body,
                            command=self._sync_interactive).pack(anchor="w", pady=4)
+        
+        # Update the UI to show or hide SAM options based on the model type
         self._update_modes()
 
-    # Show or hide SAM options depending on the selected model type
     def _update_modes(self):
+        """
+        Shows or hides the SAM mode options based on the selected model type.
+        """
         if self.model_type.get() == "sam":
             self.sam_card.pack(fill="x", pady=8)
         else:
             self.sam_card.pack_forget()
 
-    # Synchronize the interactive flag with the SAM mode
     def _sync_interactive(self):
+        """
+        Sets the `interactive` boolean variable based on the selected SAM mode option.
+        """
         self.interactive.set(self.sam_mode.get() == "interactive")
 
-    # Open a file dialog to pick an image and save its path
     def _pick_image(self):
+        """
+        Opens a file dialog window to pick an image and saves its path inside `image_path` variable.
+        """
         path = filedialog.askopenfilename(
             title="Select an image",
             filetypes=[
@@ -172,6 +218,7 @@ class LauncherApp:
                 ("All files",   "*.*"),
             ],
         )
+        
         if path:
             self.image_path.set(path)
 
@@ -180,6 +227,9 @@ class LauncherApp:
     # =========================================================================
 
     def _run_segmentation(self):
+        """
+        Runs the segmentation script with the user-selected options.
+        """
         # Validate the image path before launching the segmentation scripts
         img = self.image_path.get()
         if not img:
@@ -207,6 +257,9 @@ class LauncherApp:
         threading.Thread(target=self._wait_for_segment, daemon=True).start()
 
     def _show_segment_running(self):
+        """
+        Shows a waiting screen while the segmentation script is running in background.
+        """
         self._clear()
 
         ctk.CTkLabel(self.container, text="Segmentation Running",
@@ -217,8 +270,10 @@ class LauncherApp:
                      font=self.font_body, justify="center",
                      text_color="gray65").pack(pady=(0, 24))
 
+        # Create an indeterminate progress bar since we don't know how long the segmentation will take
         self.progress = ctk.CTkProgressBar(self.container, mode="indeterminate",
                                            height=12, corner_radius=6)
+        
         self.progress.pack(fill="x", padx=20, pady=8)
         self.progress.start()
 
@@ -226,26 +281,38 @@ class LauncherApp:
                                        text="Waiting for segmentation to finish…")
         self.status_lbl.pack(pady=(14, 18))
 
+        # The Play button is disabled until the segmentation process finishes
         self.play_btn = ctk.CTkButton(self.container, text="Play Game", width=240,
                                       height=48, corner_radius=12, font=self.font_button,
                                       fg_color=ACCENT_GREEN, hover_color=ACCENT_GREEN_HOVER,
                                       command=self._run_gameplay, state="disabled")
         self.play_btn.pack(pady=(6, 10))
+
+        # The user is able to go back to the home screen even while waiting
         ctk.CTkButton(self.container, text="Back to menu", width=240, height=40,
                       corner_radius=10, font=self.font_button, fg_color="transparent",
                       border_width=2, text_color="gray90",
                       command=self._show_home).pack()
 
     def _wait_for_segment(self):
+        """
+        Waits for the segmentation process to finish and updates the UI accordingly.
+        """
         if self._segment_proc is None:
             return
+        
         self._segment_proc.wait()
         self.root.after(0, self._segment_finished)
 
     def _segment_finished(self):
+        """
+        Enables the Play button and updates the status text once the segmentation process has finished.
+        """
         # The user may have navigated away in the meantime
         if not hasattr(self, "play_btn") or not self.play_btn.winfo_exists():
             return
+        
+        # Update the UI to show that segmentation is finished and the game is ready to play
         self.progress.stop()
         self.progress.configure(mode="determinate")
         self.progress.set(1.0)
@@ -259,6 +326,9 @@ class LauncherApp:
     # =========================================================================
 
     def _run_gameplay(self):
+        """
+        Runs the gameplay script in a new console window and closes the launcher.
+        """
         try:
             subprocess.Popen(
                 [sys.executable, GAMEPLAY_PATH],
@@ -272,6 +342,9 @@ class LauncherApp:
 
 
 def main():
+    """
+    Main function to start the Finger Slicer Launcher application.
+    """
     root = ctk.CTk()
     LauncherApp(root)
     root.mainloop()
