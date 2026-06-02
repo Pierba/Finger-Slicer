@@ -201,8 +201,8 @@ class LauncherApp:
         else:
             self.sam_card.pack_forget()
 
-        # Forcing an idle update makes the hide take effect immediately on every platform.
-        self.container.update_idletasks()
+        # A full update() drains the event queue and forces the repaint everywhere
+        self.root.update()
 
     def _sync_interactive(self):
         """

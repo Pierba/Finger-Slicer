@@ -96,7 +96,6 @@ def show_warning(title: str, message: str) -> None:
         messagebox.showwarning(title, message)
         root.destroy()
     except Exception:
-        # Headless / no GUI toolkit: the print above is the best we can do.
         pass
 
 # =============================================================================
