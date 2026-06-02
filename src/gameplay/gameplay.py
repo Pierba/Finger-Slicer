@@ -44,7 +44,18 @@ def main():
     # Load projectile sprites from the assets directory
     sprites = load_assets()
     if not sprites:
-        print(f"No RGBA assets found in '{ASSETS_DIR}'. Run segment_objects.py first.")
+        # Without sprites there is nothing to throw, so warn and bail out.
+        # Tell apart an empty/missing folder from one holding only unusable
+        # files, since the fix differs for the user.
+        png_count = len(list(ASSETS_DIR.glob("*.png"))) if ASSETS_DIR.exists() else 0
+        if png_count == 0:
+            message = (f"No images found in:\n{ASSETS_DIR}\n\n"
+                       "Run 'Segment Objects' first to create some sprites.")
+        else:
+            message = (f"Found {png_count} image(s) in:\n{ASSETS_DIR}\n"
+                       "but none are valid RGBA sprites.\n\n"
+                       "Re-run 'Segment Objects' to regenerate them.")
+        show_warning("Finger Slicer - no playable images", message)
         return
     print(f"Loaded {len(sprites)} asset(s) from '{ASSETS_DIR}'")
 

@@ -71,6 +71,34 @@ def load_assets() -> list[np.ndarray]:
 
     return sprites
 
+
+def show_warning(title: str, message: str) -> None:
+    """
+    Pops up a modal warning dialog and blocks until the user dismisses it.
+
+    The gameplay script is usually launched in its own console window, which
+    closes the instant the process exits. A plain `print` therefore vanishes
+    before the user can read it, so we surface startup problems through a GUI
+    dialog instead. Falls back to the console if no display is available.
+
+    Args:
+        title:   The dialog window title.
+        message: The body text shown to the user.
+    """
+    print(f"{title}: {message}")
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()                     # hide the empty root window
+        root.attributes("-topmost", True)   # keep the dialog above the console
+        messagebox.showwarning(title, message)
+        root.destroy()
+    except Exception:
+        # Headless / no GUI toolkit: the print above is the best we can do.
+        pass
+
 # =============================================================================
 # PROJECTILE
 # =============================================================================
