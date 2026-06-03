@@ -179,7 +179,20 @@ class LauncherApp:
                            command=self._update_modes).pack(anchor="w", pady=4)
 
         # === SAM sub-options (shown only when SAM is selected) ================
-        self.sam_card, sam_body = self._card("SAM mode", pack=False)
+        # The card is built on demand by _update_modes() rather than created here
+        # and toggled with pack/pack_forget: on macOS a pack_forget()'d frame
+        # leaves a leftover "ghost" that no amount of update() repaints away.
+        self.sam_card = None
+
+        # Update the UI to show or hide SAM options based on the model type
+        self._update_modes()
+
+    def _build_sam_card(self):
+        """
+        Creates the SAM mode card with its Auto/Interactive options, packed below
+        the model card.
+        """
+        self.sam_card, sam_body = self._card("SAM mode")
         self.sam_mode = StringVar(value="auto" if not self.interactive.get() else "interactive")
         ctk.CTkRadioButton(sam_body, text="Auto  (fully automatic)", value="auto",
                            variable=self.sam_mode, font=self.font_body,
@@ -188,21 +201,24 @@ class LauncherApp:
                            value="interactive", variable=self.sam_mode,
                            font=self.font_body,
                            command=self._sync_interactive).pack(anchor="w", pady=4)
-        
-        # Update the UI to show or hide SAM options based on the model type
-        self._update_modes()
 
     def _update_modes(self):
         """
-        Shows or hides the SAM mode options based on the selected model type.
-        """
-        if self.model_type.get() == "sam":
-            self.sam_card.pack(fill="x", pady=8)
-        else:
-            self.sam_card.pack_forget()
+        Shows the SAM mode card when SAM is selected and removes it otherwise.
 
-        # A full update() drains the event queue and forces the repaint everywhere
-        self.root.update()
+        The card is created and destroyed (instead of packed/unpacked) because on
+        macOS a pack_forget()'d frame leaves a leftover "ghost" on screen that no
+        update() call repaints away; destroying the widget forces Tk to redraw the
+        freed area.
+        """
+        want_sam = self.model_type.get() == "sam"
+        has_card = self.sam_card is not None and self.sam_card.winfo_exists()
+
+        if want_sam and not has_card:
+            self._build_sam_card()
+        elif not want_sam and has_card:
+            self.sam_card.destroy()
+            self.sam_card = None
 
     def _sync_interactive(self):
         """

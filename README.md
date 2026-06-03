@@ -45,6 +45,10 @@ Three segmentation modes are available:
 | **SAM (auto)** | SAM2 | Fully automatic — generates every mask it can, then filters out noise, background, and overlapping sub-parts. |
 | **SAM (interactive)** | SAM2 | Click-to-segment — left-click the parts of an object to keep, right-click to exclude, and save the result. |
 
+> ⚡ **Hardware note:** **YOLO** is lightweight and runs comfortably on **CPU**, so it's the
+> better pick on a modest laptop. **SAM2** is far heavier — it really wants a **CUDA GPU or
+> Apple Silicon (MPS)** device to be usable; on plain CPU it works but can be very slow.
+
 In the auto modes you **review each detected object** before it's kept: a preview pops up over a
 checkerboard background and you press `Y` to save it or any other key to skip.
 
@@ -58,7 +62,7 @@ The game loads every sprite from `assets/`, then launches them across the screen
 projectiles with simple gravity-based physics. Your webcam feed is mirrored and shown live, and
 **MediaPipe** tracks your hand to find your index fingertip every frame.
 
-Move your fingertip quickly through a projectile and you slice it in two. The recent positions of
+Move your fingertip quickly (but not too much or it is difficult to track) through a projectile and you slice it in two. The recent positions of
 your fingertip form a glowing "blade" trail, and a slice only registers when that trail is moving
 faster than a minimum speed — so resting your finger on screen won't accidentally cut anything.
 
