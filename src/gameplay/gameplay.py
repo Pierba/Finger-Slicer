@@ -55,7 +55,7 @@ def main():
                        "Re-run 'Segment Objects' to regenerate them.")
         show_warning("Finger Slicer - no playable images", message)
         return
-    
+
     print(f"Loaded {len(sprites)} asset(s) from '{ASSETS_DIR}'")
 
     # MediaPipe hand-landmarker setup
@@ -73,7 +73,7 @@ def main():
     if not cap.isOpened():
         print("Error: Could not open webcam.")
         return
-    
+
     # Request the desired capture mode
     # OpenCV silently picks the closest one the camera actually supports
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  CAM_WIDTH)
@@ -83,7 +83,7 @@ def main():
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     FPS = cap.get(cv2.CAP_PROP_FPS)
-    
+
     print(f"Webcam mode: {H}x{W} @ {FPS:.1f} fps "
           f"(requested {CAM_WIDTH}x{CAM_HEIGHT} @ {CAM_FPS} fps)")
 
@@ -125,15 +125,15 @@ def main():
                 state.frame_count += 1
 
             # == render ================================================
-            # Draw projectiles first so they appear behind the blade and HUD 
+            # Draw projectiles first so they appear behind the blade and HUD
             for p in state.projectiles:
                 p.draw(frame)
-            
+
             # Draw game visual elements on top of projectiles
             draw_miss_marks(frame, state.miss_marks)
             draw_blade(frame, state.trail)
             draw_hud(frame, state, W)
-            
+
             # If the game is over, draw the game over screen on top of everything else
             if state.game_over():
                 draw_game_over(frame, state, W, H)
@@ -143,20 +143,20 @@ def main():
 
             # Handle keypresses
             key = cv2.waitKey(1) & 0xFF
-            
+
             # Quit on 'q' or Esc key
             if key in (ord('q'), 27):
                 break
-            
+
             # Restart the game if it's over and the player presses 'r'
             if state.game_over() and key == ord('r'):
                 state.reset()
 
-            # Allow closing the window via [x] button.
+            # Allow closing the window via [x] button
             if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
-    # Release resources 
+    # Release resources
     cap.release()
     cv2.destroyAllWindows()
 

@@ -26,16 +26,16 @@ DEFAULT_CONF       = 0.05   # confidence threshold for yolo model; 0.25 misses m
 # SAM AUTO-MODE THRESHOLDS
 # =============================================================================
 
-# Minimum bounding=box side length in pixels for a mask to be kept
+# Minimum bounding-box side length in pixels for a mask to be kept
 # Masks whose width OR height is below this are treated as noise and dropped
 SMALL_OBJECT_THRESHOLD    = 50
 
-# A mask whose pixel count exceeds this percentage of the total image pixel area is treated as background and discarded.
-# Uses real mask pixel area instaed bounding=box one
+# A mask whose pixel count exceeds this percentage of the total image pixel area is treated as background and discarded
+# Uses real mask pixel area instead bounding-box one
 BACKGROUND_THRESHOLD      = 0.50
 
-# When two candidate masks overlap, the smaller one is considered a sub=part of the larger one,
-# therefore it's dropped if their actual pixel=level intersection covers more than this percentage
+# When two candidate masks overlap, the smaller one is considered a sub-part of the larger one,
+# therefore it's dropped if their actual pixel-level intersection covers more than this percentage
 # of the smaller mask's pixel area
 SUBPART_OVERLAP_THRESHOLD = 0.80
 
@@ -67,7 +67,7 @@ ALPHA_CANVAS = 0.45  # Alpha value for mask overlays
 # HAND TRACKING CONFIGS
 # =============================================================================
 
-# Pretrained MediaPipe hand landmark model.
+# Pretrained MediaPipe hand landmark model
 # Downloaded on first run
 HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
@@ -103,7 +103,7 @@ PROJECTILE_MAX_SIZE   = 180
 
 # Physics (units: pixels per frame at CAM_FPS)
 GRAVITY               = 0.6
-LAUNCH_VX_RANGE       = (2.0, 6.0)      # absolute; sign is chosen at spawn to arc toward centre
+LAUNCH_VX_RANGE       = (2.0, 6.0)      # absolute; sign is chosen at spawn to arc toward center
 LAUNCH_VY_RANGE       = (-30.0, -25.0)  # negative = upward kick; sized so apex lands in the upper third of the frame
 SPIN_RANGE            = (-6.0, 6.0)     # degrees per frame
 

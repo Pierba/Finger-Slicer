@@ -52,8 +52,8 @@ def load_assets() -> list[np.ndarray]:
     sprites: list[np.ndarray] = []
     for path in ASSETS_DIR.glob("*.png"):
         img = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
-        
-        # Validate the image and verify if it has an alpha channel 
+
+        # Validate the image and verify if it has an alpha channel
         if img is None or img.ndim != 3 or img.shape[2] < 4:
             continue
 
@@ -109,14 +109,14 @@ def add_outline(sprite: np.ndarray, color: tuple[int, int, int], thickness: int)
 
     Args:
         sprite:    RGBA image as a NumPy array.
-        color:     BGR tuple for the outline colour.
+        color:     BGR tuple for the outline color.
         thickness: Thickness of the outline in pixels.
 
     Returns:
         A new RGBA image with the outline applied.
     """
     out = sprite.copy()
-    
+
     # Extract the alpha channel and find contours to create the outline mask
     _, mask = cv2.threshold(out[:, :, 3], 0, 255, cv2.THRESH_BINARY)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -140,8 +140,8 @@ class Projectile:
     Projectile properties and physics state
     """
     sprite:   np.ndarray        # RGBA image of the projectile
-    x:        float             # horizontal position of the projectile centre
-    y:        float             # vertical position of the projectile centre
+    x:        float             # horizontal position of the projectile center
+    y:        float             # vertical position of the projectile center
     vx:       float             # horizontal velocity of the projectile
     vy:       float             # vertical velocity of the projectile
     angle:    float = 0.0       # rotation angle of the projectile
@@ -155,20 +155,20 @@ class Projectile:
     def update(self, time_scale: float = 1.0) -> None:
         # time_scale < 1.0 produces the combo slow-motion effect. Scaling
         # both gravity and velocity keeps the trajectory shape identical, just
-        # traversed more slowly — what you'd expect from "time slows down".
+        # traversed more slowly — what you'd expect from "time slows down"
         self.vy    += GRAVITY     * time_scale
         self.x     += self.vx     * time_scale
         self.y     += self.vy     * time_scale
         self.angle += self.omega  * time_scale
 
     def draw(self, frame: np.ndarray) -> None:
-        # Rotate every frame: cheap at ~180px sprites and avoids tracking a separate cached image.
+        # Rotate every frame: cheap at ~180px sprites and avoids tracking a separate cached image
         rotated = rotate_rgba(self.sprite, self.angle)
         blit_rgba(frame, rotated, int(self.x), int(self.y))
 
     def hitbox(self) -> tuple[int, int, int, int]:
         """
-        Axis-aligned rect around the projectile centre, shrunk by
+        Axis-aligned rect around the projectile center, shrunk by
         SLICE_HITBOX_SHRINK so the player has to actually cut through the
         visible object rather than swipe near it.
         Uses the unrotated sprite dims — fine for the squarish objects we get
@@ -180,13 +180,13 @@ class Projectile:
         return (int(self.x - bw // 2), int(self.y - bh // 2), bw, bh)
 
     def offscreen(self, W: int, H: int) -> bool:
-        # `margin` keeps just-barely-spawned projectiles (which start below H) alive.
+        # `margin` keeps just-barely-spawned projectiles (which start below H) alive
         margin = max(self.sprite.shape[:2])
         return self.y > H + margin or self.x < -margin or self.x > W + margin
 
 def _split(p: Projectile) -> list[Projectile]:
     """
-    Splits a projectile into two halves on slice, giving them opposite horizontal kicks and a spin boost. 
+    Splits a projectile into two halves on slice, giving them opposite horizontal kicks and a spin boost.
 
     Args:
         p: The projectile to be split.
@@ -204,7 +204,7 @@ def _split(p: Projectile) -> list[Projectile]:
     if left.size == 0 or right.size == 0:
         return []
 
-    # The new projectiles inherit the original's position and velocity, but get a horizontal kick and spin boost in opposite directions.
+    # The new projectiles inherit the original's position and velocity, but get a horizontal kick and spin boost in opposite directions
     return [
         Projectile(
             sprite=left,
@@ -231,8 +231,8 @@ class MissMark:
     """
     Short-lived red 'X' drawn where a projectile left the screen unsliced.
     """
-    x:   int        # Horizontal position of the mark centre 
-    y:   int        # Vertical position of the mark centre
+    x:   int        # Horizontal position of the mark center
+    y:   int        # Vertical position of the mark center
     age: int = 0    # Age in frames; mark is removed when age exceeds MISS_MARK_LIFETIME
 
 # =============================================================================
@@ -245,9 +245,9 @@ class GameState:
     Game state manager holding all variables and methods related to the gameplay loop.
     """
     projectiles:   list[Projectile] = field(default_factory=list)                               # Active projectiles currently on screen
-    miss_marks:    list[MissMark]   = field(default_factory=list)                               # Recent miss marks to be rendered and aged out               
+    miss_marks:    list[MissMark]   = field(default_factory=list)                               # Recent miss marks to be rendered and aged out
     trail:         deque            = field(default_factory=lambda: deque(maxlen=TRAIL_LEN))    # Trail of recent fingertip positions for blade rendering and slice detection
-    score:         int  = 0     # Player's current score.
+    score:         int  = 0     # Player's current score
     misses:        int  = 0     # Count of unsliced projectiles that left the screen; game over when it reaches MAX_MISSES
     frame_count:   int  = 0     # Total frames elapsed since the start of the game; used for timing projectile spawns
     slowmo_frames: int  = 0     # remaining frames for slow-motion effect
@@ -287,7 +287,7 @@ class GameState:
 
     def maybe_spawn(self, sprites: list[np.ndarray], W: int, H: int):
         """
-        Spawns a new projectile at regular intervals defined by `SPAWN_INTERVAL_FRAMES`, 
+        Spawns a new projectile at regular intervals defined by `SPAWN_INTERVAL_FRAMES`,
         with random properties and a random sprite took from the provided list.
 
         Args:
@@ -298,27 +298,27 @@ class GameState:
         # Only spawn a new projectile every SPAWN_INTERVAL_FRAMES frames
         if self.frame_count % SPAWN_INTERVAL_FRAMES != 0:
             return
-        
+
         # Picking a random sprite
         sprite = random.choice(sprites)
         # Single roll decides between normal / bomb / combo projectiles
         roll     = random.random()
         is_bomb  = roll < BOMB_SPAWN_CHANCE
         is_combo = not is_bomb and roll < BOMB_SPAWN_CHANCE + COMBO_SPAWN_CHANCE
-        
+
         # Bombs get a red outline
         if is_bomb:
             sprite = add_outline(sprite, BOMB_OUTLINE_COLOR, BOMB_OUTLINE_THICKNESS)
-        
+
         # Combos get a yellow outline
         elif is_combo:
             sprite = add_outline(sprite, COMBO_OUTLINE_COLOR, COMBO_OUTLINE_THICKNESS)
-        
+
         # Spawn just below the visible frame so the projectile "rises" into view
         x = random.randint(int(W * 0.15), int(W * 0.85))
         y = H + sprite.shape[0] // 2
 
-        # Arc inward: pick |vx| then throw it toward the centre
+        # Arc inward: pick |vx| then throw it toward the center
         speed = random.uniform(*LAUNCH_VX_RANGE)
         vx    = speed if x < W // 2 else -speed
         vy    = random.uniform(*LAUNCH_VY_RANGE)
@@ -332,7 +332,7 @@ class GameState:
 
     def step(self, W: int, H: int):
         """
-        Updates the position of all projectiles based on their velocity and gravity, applies slow-motion if active 
+        Updates the position of all projectiles based on their velocity and gravity, applies slow-motion if active
         and removes any projectiles that have left the screen.
         If a normal projectile leaves the screen unsliced, counts it as a miss and adds a MissMark accordingly.
 
@@ -375,15 +375,15 @@ class GameState:
         """
         Fires a slice to a projectile when the most recent fingertip segment:
         - is moving faster than MIN_SLICE_SPEED
-        - intersects an un-sliced projectile's hitbox 
+        - intersects an un-sliced projectile's hitbox
         """
         # Need at least two points to form a segment and calculate speed
         if len(self.trail) < 2:
             return
-        
+
         p1, p2 = self.trail[-2], self.trail[-1]
         dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-        
+
         # Calculate the speed of the fingertip movement and check if it exceeds the minimum slice speed
         if (dx * dx + dy * dy) ** 0.5 < MIN_SLICE_SPEED:
             return
@@ -402,10 +402,10 @@ class GameState:
                 # If the projectile is a bomb, it sets an instant game over
                 if proj.is_bomb:
                     # Slicing a bomb is an instant game over: bump misses to
-                    # the cap so game_over() flips true on the same frame.
+                    # the cap so game_over() flips true on the same frame
                     self.misses = MAX_MISSES
                     next_projectiles.append(proj)
-                
+
                 # If the projectile is a combo, it can be hit multiple times, it eventually splits when reaches COMBO_MAX_HITS
                 elif proj.is_combo:
                     # Each hit on a combo projectile increases the score, refreshes the slow-motion timer, and increments the hit count
@@ -416,16 +416,16 @@ class GameState:
                     # On final hit it gets sliced, so the halves get added to the projectile list
                     if proj.hits >= COMBO_MAX_HITS:
                         next_projectiles.extend(_split(proj))
-                    
+
                     # Otherwise add it as a whole projectile for the next frame
                     else:
                         next_projectiles.append(proj)
-                
+
                 # Normal projectile are sliced immediately into halves
                 else:
                     self.score += 1
                     next_projectiles.extend(_split(proj))
-            
+
             # If the slice does not intersect the projectile, it survives to the next frame as is
             else:
                 next_projectiles.append(proj)
@@ -440,7 +440,7 @@ class GameState:
 def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]):
     """
     Draws a red X at every recent miss, then age and prune the list.
-    
+
     Args:
         frame: The current video frame to draw on.
         miss_marks: List of active MissMark instances to be rendered and aged.
@@ -452,7 +452,7 @@ def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]):
         cv2.line(frame, (m.x - MISS_MARK_SIZE, m.y + MISS_MARK_SIZE), (m.x + MISS_MARK_SIZE, m.y - MISS_MARK_SIZE),
                  MISS_MARK_COLOR, MISS_MARK_THICKNESS, cv2.LINE_AA)
         m.age += 1
-    
+
     # Remove miss marks that have exceeded their lifetime
     miss_marks[:] = [m for m in miss_marks if m.age < MISS_MARK_LIFETIME]
 
@@ -460,7 +460,7 @@ def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]):
 def draw_blade(frame: np.ndarray, trail: deque):
     """
     Renders the fingertip trail as a tapered white polyline plus a ring at the tip.
-    
+
     Args:
         frame: The current video frame to draw on.
         trail: Deque of recent fingertip positions.
@@ -468,9 +468,9 @@ def draw_blade(frame: np.ndarray, trail: deque):
     # Draw the trail as a series of connected lines, with thickness increasing towards the tip
     pts = list(trail)
     for i in range(1, len(pts)):
-        # Older segments are thinner: i makes the line thicker as it increases since pts is ordered oldest -> newest.
+        # Older segments are thinner: i makes the line thicker as it increases since pts is ordered oldest -> newest
         cv2.line(frame, pts[i - 1], pts[i], (255, 255, 255), max(1, i), cv2.LINE_AA)
-    
+
     # Draw a green circle at the tip of the blade
     if pts:
         cv2.circle(frame, pts[-1], 12, (0, 255, 0), 2)
@@ -487,7 +487,7 @@ def draw_hud(frame: np.ndarray, state: GameState, W: int):
     """
     cv2.putText(frame, f"Score: {state.score}", (W - 230, 35),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
-    
+
     cv2.putText(frame, f"Misses: {state.misses}/{MAX_MISSES}", (W - 230, 70),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2, cv2.LINE_AA)
 
@@ -495,7 +495,7 @@ def draw_hud(frame: np.ndarray, state: GameState, W: int):
 def draw_game_over(frame: np.ndarray, state: GameState, W: int, H: int):
     """
     Draws the game over screen with the final score and instructions to restarting or quitting the game.
-    
+
     Args:
         frame: The current video frame to draw on.
         state: The current game state containing score and misses information.
@@ -504,20 +504,20 @@ def draw_game_over(frame: np.ndarray, state: GameState, W: int, H: int):
     """
     title = "GAME OVER"
     sub   = f"Final score: {state.score}   |   R = restart   Q = quit"
-    
+
     (tw, _), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)
     (sw, _), _ = cv2.getTextSize(sub,   cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-    
+
     # Black stroke + white fill so the message stays legible over any webcam background
     cv2.putText(frame, title, ((W - tw) // 2, H // 2),
                 cv2.FONT_HERSHEY_SIMPLEX, 2.0, (0, 0, 0), 6, cv2.LINE_AA)
-    
+
     cv2.putText(frame, title, ((W - tw) // 2, H // 2),
                 cv2.FONT_HERSHEY_SIMPLEX, 2.0, (255, 255, 255), 3, cv2.LINE_AA)
-    
+
     cv2.putText(frame, sub, ((W - sw) // 2, H // 2 + 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 4, cv2.LINE_AA)
-    
+
     cv2.putText(frame, sub, ((W - sw) // 2, H // 2 + 50),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2, cv2.LINE_AA)
 
@@ -529,32 +529,32 @@ def trim_rgba(sprite: np.ndarray) -> Optional[np.ndarray]:
     """
     Crops an RGBA `sprite` tightly to the bounding box of its non-zero alpha pixels.
     Strips the padding so projectiles get a tight hitbox.
-    
+
     Returns:
         The cropped RGBA sprite as a NumPy array, or None if the alpha channel is fully empty.
     """
     # If the image doesn't have an alpha channel, return it as is
     if sprite.ndim != 3 or sprite.shape[2] < 4:
         return sprite
-    
+
     # Find the bounding box of non-transparent pixels in the alpha channel
     ys, xs = np.where(sprite[:, :, 3] > 0)
     if len(xs) == 0:
         return None
-    
+
     # Crop the sprite to the bounding box and return it
     return sprite[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
 
 
 def rotate_rgba(sprite: np.ndarray, angle_deg: float) -> np.ndarray:
     """
-    Rotates `sprite` (BGRA) around its centre by `angle_deg` degrees and expands
+    Rotates `sprite` (BGRA) around its center by `angle_deg` degrees and expands
     the output canvas so the rotated image fits without any corner clipping.
-    
+
     Args:
         sprite: RGBA image as a NumPy array.
         angle_deg: Rotation angle in degrees (counterclockwise).
-    
+
     Returns:
         The rotated RGBA image as a NumPy array, with an expanded canvas to avoid clipping.
     """
@@ -567,7 +567,7 @@ def rotate_rgba(sprite: np.ndarray, angle_deg: float) -> np.ndarray:
     new_w    = int(h * sin + w * cos)
     new_h    = int(h * cos + w * sin)
 
-    # Shift so the rotated image is centred inside the expanded canvas.
+    # Shift so the rotated image is centered inside the expanded canvas
     M[0, 2] += new_w / 2 - w / 2
     M[1, 2] += new_h / 2 - h / 2
 
@@ -582,7 +582,7 @@ def rotate_rgba(sprite: np.ndarray, angle_deg: float) -> np.ndarray:
 
 def blit_rgba(frame_bgr: np.ndarray, sprite_bgra: np.ndarray, cx: int, cy: int):
     """
-    Alpha-composite `sprite_bgra` onto `frame_bgr` in place, centred at (`cx`, `cy`).
+    Alpha-composite `sprite_bgra` onto `frame_bgr` in place, centered at (`cx`, `cy`).
     Handles clipping at all four frame edges.
 
     Args:

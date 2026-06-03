@@ -33,7 +33,7 @@ import sys
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
-from config import *                          
+from config import *
 import cv2
 import numpy as np
 from src.segmentation.segment_utils import *
@@ -46,8 +46,9 @@ import uuid
 
 def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF, model_name: Path = DEFAULT_YOLO_MODEL):
     """
-    Detects and segments objects present in `image_path` with YOLO26x-seg (default model) - or any 
+    Detects and segments objects present in `image_path` with YOLO26x-seg (default model) - or any
     other `model_name` - using the given `conf` threshold.
+
     For each detection the pipeline is:
     - raw mask
     - upscale
@@ -55,7 +56,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
     - morphological refinement
     - alpha crop
     - save PNG
-    
+
     Eventually the preview image is also saved in `output_dir`.
 
     Args:
@@ -64,9 +65,9 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
         conf: confidence threshold for detection.
         model_name: path to the YOLO model file.
     """
-    # Create output directory if it doesn't exist.
+    # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-   
+
     print(f"Loading {model_name} ...")
     model = YOLO(model_name)
 
@@ -91,7 +92,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
     names     = result.names                      # class names list from the model
     del result
 
-    # Coping the original image to draw the preview with mask overlays and labels
+    # Copying the original image to draw the preview with mask overlays and labels
     preview  = img.copy()
 
     # Collect (filename, crop_rgba) pairs to let user confirm each via save_images
@@ -101,13 +102,13 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
     for i, (mask_raw, box, conf_v, cls) in enumerate(zip(masks_raw, boxes, confs, classes)):
         # == metadata =====================================================
         label  = names[cls]                 # get class name from model's names list with class index
-        color  = PALETTE[i % len_palette]   # cycling palette colour per object
+        color  = PALETTE[i % len_palette]   # cycling palette color per object
 
         # == mask pipeline ================================================
         mask = upscale_mask(mask_raw, (W, H))
         mask = refine_mask(mask)
-        
-        # Image cropped to the mask's bounding box with trasparent background
+
+        # Image cropped to the mask's bounding box with transparent background
         crop = mask_to_rgba_crop(img, mask)
         if crop is None:
             print(f"  skip  {label}: empty mask")
@@ -118,7 +119,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
         print(f"  detected  {name:<12}  class={label:<15}  conf={conf_v:.2f}")
         detected.append((name, crop))
 
-        # == annotate preview  =============================================
+        # == annotate preview =============================================
         preview = overlay_mask(preview, mask, color=color, alpha=ALPHA_CANVAS)
         x1, y1 = map(int, box[:2])
         cv2.putText(preview, name, (max(0, x1 - 8), max(0, y1 - 15)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2, cv2.LINE_AA)
@@ -141,20 +142,20 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
     """
     Automatically segments all objects in `image_path` using SAM2 (default model) or any other `model_name`.
     Unlike YOLO, SAM2 has no concept of object classes, therefore it returns every mask it finds.
-    Each raw mask is first cleaned up, then it goes through 
+    Each raw mask is first cleaned up, then it goes through
     three filtering steps to remove noise and duplicates:
     - Upscale       upscale_mask() resizes to original dimensions with bilinear
                     interpolation + re-threshold.
-    
+
     - Refine        refine_mask() closes holes, removes specks, and keeps only
                     the largest connected component.
 
     - Size          drops masks whose bounding box is smaller than
                     SMALL_OBJECT_THRESHOLD in either dimension.
-    
+
     - Background    drops masks whose actual pixel count is greater than
                     BACKGROUND_THRESHOLD of the total image pixel area.
-    
+
     - Sub-part      sorts survivors by pixel area in descending order; if a
                     smaller mask's pixel-level intersection with a larger one
                     exceeds SUBPART_OVERLAP_THRESHOLD it is discarded.
@@ -225,9 +226,9 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
     final_objects: list[dict] = []
     for cand in candidates:
         is_subpart = False
-        
+
         for saved in final_objects:
-            # Pixel-level intersection: count pixels that are lit in BOTH masks.
+            # Pixel-level intersection: count pixels that are lit in BOTH masks
             pixel_intersection = int(np.logical_and(cand["alpha"] > 0, saved["alpha"] > 0).sum())
             if pixel_intersection == 0:
                 continue
@@ -247,7 +248,8 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
     # == Build preview + collect crops for user confirmation ==================
     print("Preparing objects for review ...")
     preview  = img.copy()
-    # Collect (filename, crop_rgba) pairs; user will confirm each via save_images.
+
+    # Collect (filename, crop_rgba) pairs; user will confirm each via save_images
     detected: list[tuple[str, np.ndarray]] = []
 
     len_palette = len(PALETTE)
@@ -285,7 +287,7 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
 def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
     """
     SAM2 interactive segmentation via mouse clicks and keyboard actions.
-    
+
     Controls:
     - Left-click   Positive point (include in object)
     - Right-click  Negative point (exclude / background)
@@ -295,9 +297,9 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     - U            Undo last point
     - Q / Esc      Quit
     """
-    # Create output directory if it doesn't exist.
+    # Create output directory if it doesn't exist
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     print(f"Loading {model_name} ...")
     model = SAM(model_name)
 
@@ -317,7 +319,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     state = InteractiveState()
     WIN   = "SAM2 Interactive Segmentation"
     # WINDOW_AUTOSIZE locks the window to exactly the image dimensions we send,
-    # preventing any OS-level stretching.
+    # preventing any OS-level stretching
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
 
     # == HUD rendering ====================================================
@@ -336,9 +338,9 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
             (tw, th), base = cv2.getTextSize(line, font, scale, thick)
             cv2.rectangle(canvas, (8, y - th - pad), (12 + tw, y + base + pad), (0, 0, 0), -1)
             cv2.putText(canvas, line, (10, y), font, scale, (220, 220, 220), thick, cv2.LINE_AA)
-            
+
             y += th + base + pad + 4
-    
+
     # == drawing the window ================================================
     def redraw():
         """
@@ -370,7 +372,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     # == mouse events ======================================================
     def on_mouse(event: int, x: int, y: int, _flags, _param):
         # x, y arrive in display space — convert back to original image space
-        # before storing so that SAM receives the correct coordinates.
+        # before storing so that SAM receives the correct coordinates
         ix, iy = int(x / scale), int(y / scale)
         match event:
             case cv2.EVENT_LBUTTONDOWN:
@@ -380,7 +382,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
             case cv2.EVENT_RBUTTONDOWN:
                 state.neg_pts.append((ix, iy))
                 state.current_mask = None
-                state.status = f"- negative ({ix},{iy}) — press S to segment"       
+                state.status = f"- negative ({ix},{iy}) — press S to segment"
         redraw()
 
     cv2.setMouseCallback(WIN, on_mouse)
@@ -396,8 +398,8 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
 
         state.status = "Segmenting ..."
 
-        # SAM2 expects lists of points and labels, so we combine positive and negative points into single lists.
-        # The model will treat points with label 1 as "include in object" and points with label 0 as "exclude / background".
+        # SAM2 expects lists of points and labels, so we combine positive and negative points into single lists
+        # The model will treat points with label 1 as "include in object" and points with label 0 as "exclude / background"
         all_pts = state.pos_pts + state.neg_pts
         all_lbl = [1] * len(state.pos_pts) + [0] * len(state.neg_pts)
 
@@ -494,7 +496,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
             state.current_mask = None
             state.status = "Last point removed"
             redraw()
-        
+
         if cv2.getWindowProperty(WIN, cv2.WND_PROP_VISIBLE) < 1:
             break
 

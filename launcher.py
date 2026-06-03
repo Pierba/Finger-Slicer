@@ -21,7 +21,7 @@ GAMEPLAY_PATH   = str(Path("src/gameplay/gameplay.py"))
 # CREATE_NEW_CONSOLE is Windows-only, it falls back to 0 on other platforms so the script still runs
 NEW_CONSOLE_FLAG = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
-# === modern aesthetic ====================================================               
+# === modern aesthetic ====================================================
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
@@ -85,24 +85,24 @@ class LauncherApp:
         Args:
             title: The text to show in the section header of the card.
             pack: Whether to pack the card into the container immediately or let the caller do it.
-        
+
         Returns:
             A tuple of (card_frame, body_frame) where card_frame is the outer rounded panel and
             body_frame is the inner frame where content can be placed.
         """
         card = ctk.CTkFrame(self.container, corner_radius=14)
-        
-        # Choose to pack the card immediately or do it later when 
+
+        # Choose to pack the card immediately or do it later when
         # having content ready to avoid empty cards in the UI
         if pack:
             card.pack(fill="x", pady=8)
-        
+
         ctk.CTkLabel(card, text=title.upper(), font=self.font_section,
                      text_color="gray60").pack(anchor="w", padx=18, pady=(14, 0))
-        
+
         body = ctk.CTkFrame(card, fg_color="transparent")
         body.pack(fill="x", padx=18, pady=(6, 16))
-        
+
         return card, body
 
     # =========================================================================
@@ -139,15 +139,15 @@ class LauncherApp:
 
         The user can choose:
         - Input image
-        - Segmentation model type 
-        - Whether to use interactive mode for SAM if selected 
+        - Segmentation model type
+        - Whether to use interactive mode for SAM if selected
         """
         self._clear()
 
         ctk.CTkLabel(self.container, text="Segment Objects",
                      font=self.font_heading).pack(anchor="w", pady=(4, 14))
 
-        # Actions anchored to the bottom so the rest of the form stacks above.
+        # Actions anchored to the bottom so the rest of the form stacks above
         action = ctk.CTkFrame(self.container, fg_color="transparent")
         action.pack(side="bottom", fill="x", pady=(18, 0))
 
@@ -155,13 +155,13 @@ class LauncherApp:
                       font=self.font_button, fg_color="transparent", border_width=2,
                       text_color="gray90",
                       command=self._show_home).pack(side="left")
-        
+
         ctk.CTkButton(action, text="Start Segmentation", width=180, height=42,
                       corner_radius=10, font=self.font_button,
                       fg_color=ACCENT_GREEN, hover_color=ACCENT_GREEN_HOVER,
                       command=self._run_segmentation).pack(side="right")
 
-        # === image picker =====================================================     
+        # === image picker =====================================================
         _, img_body = self._card("Image")
         ctk.CTkEntry(img_body, textvariable=self.image_path, height=38,
                      corner_radius=8, placeholder_text="No image selected").pack(
@@ -174,8 +174,8 @@ class LauncherApp:
         ctk.CTkRadioButton(model_body, text="YOLO  (auto instance segmentation)",
                            value="yolo", variable=self.model_type, font=self.font_body,
                            command=self._update_modes).pack(anchor="w", pady=4)
-        ctk.CTkRadioButton(model_body, text="SAM", value="sam",
-                           variable=self.model_type, font=self.font_body,
+        ctk.CTkRadioButton(model_body, text="SAM",
+                           value="sam", variable=self.model_type, font=self.font_body,
                            command=self._update_modes).pack(anchor="w", pady=4)
 
         # === SAM sub-options (shown only when SAM is selected) ================
@@ -237,7 +237,7 @@ class LauncherApp:
                 ("All files",   "*.*"),
             ],
         )
-        
+
         if path:
             self.image_path.set(path)
 
@@ -271,7 +271,7 @@ class LauncherApp:
             messagebox.showerror("Launch failed", str(exc))
             return
 
-        # Watch the process so we can flip the Play button on once it exits.
+        # Watch the process so we can flip the Play button on once it exits
         self._show_segment_running()
         threading.Thread(target=self._wait_for_segment, daemon=True).start()
 
@@ -292,7 +292,7 @@ class LauncherApp:
         # Create an indeterminate progress bar since we don't know how long the segmentation will take
         self.progress = ctk.CTkProgressBar(self.container, mode="indeterminate",
                                            height=12, corner_radius=6)
-        
+
         self.progress.pack(fill="x", padx=20, pady=8)
         self.progress.start()
 
@@ -319,7 +319,7 @@ class LauncherApp:
         """
         if self._segment_proc is None:
             return
-        
+
         self._segment_proc.wait()
         self.root.after(0, self._segment_finished)
 
@@ -330,7 +330,7 @@ class LauncherApp:
         # The user may have navigated away in the meantime
         if not hasattr(self, "play_btn") or not self.play_btn.winfo_exists():
             return
-        
+
         # Update the UI to show that segmentation is finished and the game is ready to play
         self.progress.stop()
         self.progress.configure(mode="determinate")
