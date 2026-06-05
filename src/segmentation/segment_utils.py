@@ -208,7 +208,7 @@ def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int]
 # CANVAS UTILITIES
 # =============================================================================
 
-def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = SAVE_IMG_H) -> np.ndarray:
+def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = PROJECTILE_MAX_SIZE, out_h: int = PROJECTILE_MAX_SIZE) -> np.ndarray:
     """
     Scales `crop_rgba` (RGBA) to fit inside an `out_w` x `out_h` canvas while preserving its aspect ratio.
     Downscaling uses INTER_AREA (best quality for shrinking).
@@ -216,8 +216,8 @@ def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = SAVE_IMG_W, out_h: int = S
 
     Args:
         crop_rgba: an RGBA image (h, w, 4) as a uint8 array.
-        out_w: output width of the canvas (default: SAVE_IMG_W).
-        out_h: output height of the canvas (default: SAVE_IMG_H).
+        out_w: output width of the canvas (default: PROJECTILE_MAX_SIZE).
+        out_h: output height of the canvas (default: PROJECTILE_MAX_SIZE).
 
     Returns:
         A RGBA image (out_h, out_w, 4) as uint8 array.
@@ -262,7 +262,7 @@ class InteractiveState:
 # =============================================================================
 def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) -> str:
     """
-    Fits the `crop_rgba` onto a fixed SAVE_IMG_W x SAVE_IMG_H canvas and
+    Fits the `crop_rgba` onto a fixed PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE canvas and
     saves it as a transparent PNG in `output_dir` with the given `name`.
 
     Args:
@@ -288,7 +288,7 @@ def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) 
 def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]], output_dir: Path):
     """
     For each (filename, crop_rgba) pair in `object_stream`:
-    - Fits the crop onto a fixed SAVE_IMG_W x SAVE_IMG_H canvas.
+    - Fits the crop onto a fixed PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE canvas.
     - Shows the canvas blended over a checkerboard in a fixed-size window.
     - On Y, saves the canvas as a transparent PNG in `output_dir`, else it skips it.
 
@@ -309,7 +309,7 @@ def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]], output_dir
 
     for filename, img in object_stream:
         # == normalise to fixed canvas ============================
-        canvas = fit_to_canvas(img)           # always SAVE_IMG_H × SAVE_IMG_W × 4
+        canvas = fit_to_canvas(img)           # always PROJECTILE_MAX_SIZE × PROJECTILE_MAX_SIZE × 4
 
         # == build checkerboard preview ===========================
         h, w    = canvas.shape[:2]

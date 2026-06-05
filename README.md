@@ -33,7 +33,7 @@ The project is built around two stages that you run in order.
 ### Stage 1 — Segment objects into sprites
 
 You give the tool a source image and pick a model. It detects the objects, removes their
-backgrounds pixel-by-pixel, and saves each one as a `512×512` transparent PNG into `assets/`.
+backgrounds pixel-by-pixel, and saves each one as a `180×180` (game-scale) transparent PNG into `assets/`.
 A composite **preview** image (showing every detected object with a coloured mask and label) is
 written to `previews/` so you can see what was found.
 

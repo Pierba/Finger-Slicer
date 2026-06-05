@@ -42,8 +42,10 @@ def load_model() -> Path:
 
 def load_assets() -> list[np.ndarray]:
     """
-    Loads every RGBA PNG from `ASSETS_DIR`, trims away transparent padding and
-    downscales it, so the longest side is less or equal to `PROJECTILE_MAX_SIZE`.
+    Loads every RGBA PNG from `ASSETS_DIR` and trims away its transparent padding.
+
+    Sprites are saved by the segmentation step already fitted to `PROJECTILE_MAX_SIZE`
+    (longest side), so they load at game scale and need no further downscaling here.
 
     Returns:
         A list of RGBA sprites as NumPy arrays for the projectiles.
@@ -57,16 +59,11 @@ def load_assets() -> list[np.ndarray]:
         if img is None or img.ndim != 3 or img.shape[2] < 4:
             continue
 
-        # Trim transparent padding
+        # Trim transparent padding for a tight projectile hitbox
         trimmed = trim_rgba(img)
         if trimmed is None:
             continue
 
-        # Downscale if the longest side exceeds PROJECTILE_MAX_SIZE
-        h, w  = trimmed.shape[:2]
-        scale = PROJECTILE_MAX_SIZE / max(h, w)
-        if scale < 1.0:
-            trimmed = cv2.resize(trimmed, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         sprites.append(trimmed)
 
     return sprites

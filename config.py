@@ -40,15 +40,6 @@ BACKGROUND_THRESHOLD      = 0.50
 SUBPART_OVERLAP_THRESHOLD = 0.80
 
 # =============================================================================
-# SAVED IMAGES CANVAS SIZE
-# =============================================================================
-
-# Every extracted object is fitted onto a transparent canvas
-# of these dimensions before being saved
-SAVE_IMG_W = 512
-SAVE_IMG_H = 512
-
-# =============================================================================
 # MASK OVERLAYS CONFIGS
 # =============================================================================
 
@@ -97,8 +88,9 @@ CAM_FPS    = 60
 # Folder we pull RGBA projectile sprites from (same place segment_objects.py saves to)
 ASSETS_DIR            = DEFAULT_OUTPUT_DIR
 
-# Longest side of a projectile in pixels after trimming + downscaling the source PNG
-# Sources are saved at 512x512 with transparent padding — too big to throw around at game scale
+# Longest side of a projectile in pixels. Segmented objects are fitted directly onto a
+# PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE transparent canvas when saved, so sprites
+# already load at game scale — no second downscale at gameplay time.
 PROJECTILE_MAX_SIZE   = 180
 
 # Physics (units: pixels per frame at CAM_FPS)
