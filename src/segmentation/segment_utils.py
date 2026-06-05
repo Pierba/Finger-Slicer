@@ -61,12 +61,6 @@ def build_parser() -> argparse.Namespace:
         action="store_true"
     )
     p.add_argument(
-        "--output",
-        type=Path,
-        default=DEFAULT_OUTPUT_DIR,
-        help=f"Output directory  (default: {DEFAULT_OUTPUT_DIR})"
-    )
-    p.add_argument(
         "--conf",
         type=float,
         default=DEFAULT_CONF,
@@ -260,14 +254,13 @@ class InteractiveState:
 # =============================================================================
 # SAVE IMAGES [INTERACTIVE MODE]
 # =============================================================================
-def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) -> str:
+def save_interactive_images(crop_rgba: np.ndarray, name: str) -> str:
     """
     Fits the `crop_rgba` onto a fixed PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE canvas and
-    saves it as a transparent PNG in `output_dir` with the given `name`.
+    saves it as a transparent PNG in the assets directory with the given `name`.
 
     Args:
         crop_rgba: an RGBA image (h, w, 4) as a uint8 array to be saved.
-        output_dir: the directory where the PNG file will be saved.
         name: the filename (without extension) for the saved PNG.
 
     Returns:
@@ -275,7 +268,7 @@ def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) 
     """
     canvas = fit_to_canvas(crop_rgba)
 
-    path   = output_dir / f"{name}.png"
+    path   = DEFAULT_OUTPUT_DIR / f"{name}.png"
     if not cv2.imwrite(str(path), canvas):
         raise OSError(f"Failed to write PNG: {path}")
 
@@ -285,16 +278,15 @@ def save_interactive_images(crop_rgba: np.ndarray, output_dir: Path, name: str) 
 # SAVE IMAGES [AUTO MODE]
 # =============================================================================
 
-def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]], output_dir: Path):
+def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]]):
     """
     For each (filename, crop_rgba) pair in `object_stream`:
     - Fits the crop onto a fixed PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE canvas.
     - Shows the canvas blended over a checkerboard in a fixed-size window.
-    - On Y, saves the canvas as a transparent PNG in `output_dir`, else it skips it.
+    - On Y, saves the canvas as a transparent PNG in the assets directory, else it skips it.
 
     Args:
         object_stream: an iterable of (filename, crop_rgba) pairs.
-        output_dir: the directory where the PNG files will be saved.
     """
     def _create_checkerboard(h: int, w: int, square_size: int = 20) -> np.ndarray:
         """
@@ -329,7 +321,7 @@ def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]], output_dir
             print("\t X  review cancelled.")
             break
         elif key == ord('y'):
-            path   = output_dir / f"{filename}.png"
+            path   = DEFAULT_OUTPUT_DIR / f"{filename}.png"
             cv2.imwrite(str(path), canvas)
             print(f"\t V  saved  {filename}")
         else:

@@ -197,10 +197,9 @@ python src/segmentation/segment_objects.py photo.jpg --model-type sam
 # SAM interactive (click to segment)
 python src/segmentation/segment_objects.py photo.jpg --model-type sam -i
 
-# Tune detection / pick a different model / output folder
+# Tune detection / pick a different model
 python src/segmentation/segment_objects.py photo.jpg --conf 0.1
 python src/segmentation/segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
-python src/segmentation/segment_objects.py photo.jpg --output my_sprites
 ```
 
 | Flag | Description |
@@ -209,7 +208,6 @@ python src/segmentation/segment_objects.py photo.jpg --output my_sprites
 | `--model-type {yolo,sam}` | Segmentation backend (default: `yolo`) |
 | `-i`, `--interactive` | Click-to-segment mode (SAM only) |
 | `--conf` | Detection confidence for auto modes (default: `0.05`; raise to `0.25+` for scene photos) |
-| `--output` | Output directory (default: `assets/`) |
 | `--yolo-model` / `--sam-model` | Override the model weights |
 
 The game itself takes no arguments:

@@ -23,7 +23,6 @@ Usage
   python segment_objects.py photo.jpg --model_type sam              # SAM auto
   python segment_objects.py photo.jpg --model_type sam -i           # SAM interactive
   python segment_objects.py photo.jpg --model_type yolo --conf 0.1
-  python segment_objects.py photo.jpg --output my_dir
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
 """
 from pathlib import Path
@@ -44,7 +43,7 @@ import uuid
 # YOLO AUTO MODE  (YOLO26-seg instance segmentation)
 # =============================================================================
 
-def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF, model_name: Path = DEFAULT_YOLO_MODEL):
+def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path = DEFAULT_YOLO_MODEL):
     """
     Detects and segments objects present in `image_path` with YOLO26x-seg (default model) - or any
     other `model_name` - using the given `conf` threshold.
@@ -57,16 +56,15 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
     - alpha crop
     - save PNG
 
-    Eventually the preview image is also saved in `output_dir`.
+    Eventually the composite preview image is also saved in `PREVIEW_DIR`.
 
     Args:
         image_path: path to the input image file.
-        output_dir: path to the output directory.
         conf: confidence threshold for detection.
         model_name: path to the YOLO model file.
     """
-    # Create output directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure the assets directory exists
+    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading {model_name} ...")
     model = YOLO(model_name)
@@ -126,7 +124,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
 
     # == interactive save: user confirms each crop with Y / any other key ==
     print(f"\nReview {len(detected)} detected object(s) — press Y to save, any other key to skip.\n")
-    save_auto_images(detected, output_dir)
+    save_auto_images(detected)
 
     # == always write the composite preview as a reference map =============
     prev_path = PREVIEW_DIR / "_preview_yolo_auto.png"
@@ -138,7 +136,7 @@ def run_yolo_auto(image_path: Path, output_dir: Path, conf: float = DEFAULT_CONF
 # SAM AUTO MODE  (SAM2 fully-automatic segmentation)
 # =============================================================================
 
-def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
+def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     """
     Automatically segments all objects in `image_path` using SAM2 (default model) or any other `model_name`.
     Unlike YOLO, SAM2 has no concept of object classes, therefore it returns every mask it finds.
@@ -161,15 +159,14 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
                     exceeds SUBPART_OVERLAP_THRESHOLD it is discarded.
 
     Surviving objects are saved as transparent PNGs and the preview image
-    (_preview_sam_auto.png) is saved in `out_dir`.
+    (_preview_sam_auto.png) is saved in `PREVIEW_DIR`.
 
     Args:
         image_path: path to the input image file.
-        output_dir: path to the output directory.
         model_name: path to the SAM model file.
     """
-    # Create output directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure the assets directory exists
+    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading {model_name}...")
     model = SAM(model_name)
@@ -272,7 +269,7 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
 
     # == interactive save: user confirms each crop with Y / any other key ==
     print(f"\nReview {len(detected)} detected object(s) — press Y to save, any other key to skip.\n")
-    save_auto_images(detected, output_dir)
+    save_auto_images(detected)
 
     # == always write the composite preview as a reference map =============
     prev_path = PREVIEW_DIR / "_preview_sam_auto.png"
@@ -284,7 +281,7 @@ def run_sam_auto(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_
 # SAM INTERACTIVE MODE  (SAM2 click-to-segment)
 # =============================================================================
 
-def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, model_name: Path = DEFAULT_SAM_MODEL):
+def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     """
     SAM2 interactive segmentation via mouse clicks and keyboard actions.
 
@@ -297,8 +294,8 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
     - U            Undo last point
     - Q / Esc      Quit
     """
-    # Create output directory if it doesn't exist
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Ensure the assets directory exists
+    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     print(f"Loading {model_name} ...")
     model = SAM(model_name)
@@ -441,7 +438,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
 
         # Saving the image with a unique name to avoid overwriting issues
         name = uuid.uuid4().hex[:8]
-        path = save_interactive_images(crop, output_dir, name)
+        path = save_interactive_images(crop, name)
         print(f"Saved -> {path}")
 
         # Updating the state for the next segmentation
@@ -501,7 +498,7 @@ def run_interactive(image_path: Path, output_dir: Path = DEFAULT_OUTPUT_DIR, mod
             break
 
     cv2.destroyAllWindows()
-    print(f"\n  {state.obj_count} object(s) saved to '{output_dir}/'")
+    print(f"\n  {state.obj_count} object(s) saved to '{DEFAULT_OUTPUT_DIR}/'")
 
 def main():
     """
@@ -513,7 +510,6 @@ def main():
     image: Path         = args.image
     model_type: str     = args.model_type
     interactive: bool   = args.interactive
-    output_dir: Path    = args.output
     conf: float         = args.conf
     yolo_model: Path    = args.yolo_model
     sam_model: Path     = args.sam_model
@@ -527,14 +523,14 @@ def main():
     match model_type:
         case "yolo":
             print("Mode: YOLO AUTO  (YOLO26-seg instance segmentation)")
-            run_yolo_auto(image, output_dir, conf, yolo_model)
+            run_yolo_auto(image, conf, yolo_model)
         case "sam":
             if interactive:
                 print("Mode: INTERACTIVE  (SAM2 click-to-segment)")
-                run_interactive(image, output_dir, sam_model)
+                run_interactive(image, sam_model)
             else:
                 print("Mode: SAM AUTO  (SAM2 fully-automatic segmentation)")
-                run_sam_auto(image, output_dir, sam_model)
+                run_sam_auto(image, sam_model)
 
 if __name__ == "__main__":
     main()
