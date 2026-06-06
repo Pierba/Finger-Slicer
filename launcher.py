@@ -179,9 +179,7 @@ class LauncherApp:
                            command=self._update_modes).pack(anchor="w", pady=4)
 
         # === SAM sub-options (shown only when SAM is selected) ================
-        # The card is built on demand by _update_modes() rather than created here
-        # and toggled with pack/pack_forget: on macOS a pack_forget()'d frame
-        # leaves a leftover "ghost" that no amount of update() repaints away.
+        # The card is built on demand by _update_modes()
         self.sam_card = None
 
         # Update the UI to show or hide SAM options based on the model type
@@ -205,11 +203,6 @@ class LauncherApp:
     def _update_modes(self):
         """
         Shows the SAM mode card when SAM is selected and removes it otherwise.
-
-        The card is created and destroyed (instead of packed/unpacked) because on
-        macOS a pack_forget()'d frame leaves a leftover "ghost" on screen that no
-        update() call repaints away; destroying the widget forces Tk to redraw the
-        freed area.
         """
         want_sam = self.model_type.get() == "sam"
         has_card = self.sam_card is not None and self.sam_card.winfo_exists()

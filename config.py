@@ -90,7 +90,7 @@ ASSETS_DIR            = DEFAULT_OUTPUT_DIR
 
 # Longest side of a projectile in pixels. Segmented objects are fitted directly onto a
 # PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE transparent canvas when saved, so sprites
-# already load at game scale — no second downscale at gameplay time.
+# already load at game scale — no second downscale at gameplay time
 PROJECTILE_MAX_SIZE   = 180
 
 # Physics (units: pixels per frame at CAM_FPS)
