@@ -14,6 +14,7 @@ from collections import deque
 from config import *
 import cv2
 from dataclasses import dataclass, field
+from enum import Enum, auto
 import numpy as np
 from pathlib import Path
 import random
@@ -230,6 +231,17 @@ def add_outline(sprite: np.ndarray, color: tuple[int, int, int], thickness: int)
 
     return out
 
+class ProjectileKind(Enum):
+    """
+    The three projectile types:
+    - `NORMAL`: sliced once for a point
+    - `BOMB`: slicing it is an instant game over
+    - `COMBO`: sliced repeatedly, triggers slow-motion, pure bonus
+    """
+    NORMAL = auto()     # sliced once for a point
+    BOMB   = auto()     # slicing it is an instant game over
+    COMBO  = auto()     # sliced repeatedly, triggers slow-motion, pure bonus
+
 @dataclass
 class Projectile:
     """
@@ -244,8 +256,7 @@ class Projectile:
     omega:    float = 0.0       # angular velocity of the projectile
     sliced:   bool  = False     # flags the two halves so they are not re-sliced
     scored:   bool  = False     # flags anything that should NOT count as a miss when it leaves the screen
-    is_bomb:  bool  = False     # projectiles end the game instantly if the player slices them
-    is_combo: bool  = False     # projectiles can be sliced repeatedly and trigger slow-motion
+    kind: ProjectileKind = ProjectileKind.NORMAL  # which of the three projectile types this is
     hits:     int   = 0         # combo-only: how many times it has been hit so far
 
     def update(self, time_scale: float = 1.0) -> None:
@@ -398,17 +409,15 @@ class GameState:
         # Picking a random sprite
         sprite = random.choice(sprites)
         # Single roll decides between normal / bomb / combo projectiles
-        roll     = random.random()
-        is_bomb  = roll < BOMB_SPAWN_CHANCE
-        is_combo = not is_bomb and roll < BOMB_SPAWN_CHANCE + COMBO_SPAWN_CHANCE
-
-        # Bombs get a red outline
-        if is_bomb:
-            sprite = add_outline(sprite, BOMB_OUTLINE_COLOR, BOMB_OUTLINE_THICKNESS)
-
-        # Combos get a yellow outline
-        elif is_combo:
-            sprite = add_outline(sprite, COMBO_OUTLINE_COLOR, COMBO_OUTLINE_THICKNESS)
+        roll = random.random()
+        if roll < BOMB_SPAWN_CHANCE:
+            kind = ProjectileKind.BOMB
+            sprite = add_outline(sprite, BOMB_OUTLINE_COLOR, BOMB_OUTLINE_THICKNESS)   # Bombs get a red outline
+        elif roll < BOMB_SPAWN_CHANCE + COMBO_SPAWN_CHANCE:
+            kind = ProjectileKind.COMBO
+            sprite = add_outline(sprite, COMBO_OUTLINE_COLOR, COMBO_OUTLINE_THICKNESS) # Combos get a yellow outline
+        else:
+            kind = ProjectileKind.NORMAL
 
         # Spawn just below the visible frame so the projectile "rises" into view
         x = random.randint(int(W * 0.15), int(W * 0.85))
@@ -423,7 +432,7 @@ class GameState:
         # Create and add the new projectile to the game state
         self.projectiles.append(Projectile(
             sprite=sprite, x=x, y=y, vx=vx, vy=vy, omega=omega,
-            is_bomb=is_bomb, is_combo=is_combo, scored=is_combo, # Combos are pure bonus so if it leaves the screen unsliced doesn't cost a life
+            kind=kind, scored=(kind is ProjectileKind.COMBO), # Combos are pure bonus so if it leaves the screen unsliced doesn't cost a life
         ))
 
     def step(self, W: int, H: int):
@@ -449,7 +458,7 @@ class GameState:
                 # A whole projectile that left without being sliced costs a life
                 # Halves (scored=True) and already-sliced fragments don't
                 # Bombs are skipped too
-                if not p.scored and not p.is_bomb:
+                if not p.scored and p.kind is not ProjectileKind.BOMB:
                     # Increasing the missing counter
                     self.misses += 1
 
@@ -498,32 +507,32 @@ class GameState:
                 # Play the blade slice sound effect on hit
                 play_sound(BLADE_SLICE_SOUND)
                 
-                # If the projectile is a bomb, it sets an instant game over
-                if proj.is_bomb:
-                    # Slicing a bomb is an instant game over: bump misses to
-                    # the cap so game_over() flips true on the same frame
-                    self.misses = MAX_MISSES
-                    next_projectiles.append(proj)
-
-                # If the projectile is a combo, it can be hit multiple times, it eventually splits when reaches COMBO_MAX_HITS
-                elif proj.is_combo:
-                    # Each hit on a combo projectile increases the score, refreshes the slow-motion timer, and increments the hit count
-                    self.score        += 1
-                    self.slowmo_frames = COMBO_SLOWMO_DURATION
-                    proj.hits         += 1
-
-                    # On final hit it gets sliced, so the halves get added to the projectile list
-                    if proj.hits >= COMBO_MAX_HITS:
-                        next_projectiles.extend(_split(proj))
-
-                    # Otherwise add it as a whole projectile for the next frame
-                    else:
+                match proj.kind:
+                    # Slicing a bomb is an instant game over
+                    case ProjectileKind.BOMB:
+                        # Bump misses to the cap so game_over() flips true on the same frame
+                        self.misses = MAX_MISSES
                         next_projectiles.append(proj)
 
-                # Normal projectile are sliced immediately into halves
-                else:
-                    self.score += 1
-                    next_projectiles.extend(_split(proj))
+                    # A combo can be hit multiple times, eventually splitting when it reaches COMBO_MAX_HITS
+                    case ProjectileKind.COMBO:
+                        # Each hit increases the score, refreshes the slow-motion timer, and increments the hit count
+                        self.score        += 1
+                        self.slowmo_frames = COMBO_SLOWMO_DURATION
+                        proj.hits         += 1
+
+                        # On final hit it gets sliced, so the halves get added to the projectile list
+                        if proj.hits >= COMBO_MAX_HITS:
+                            next_projectiles.extend(_split(proj))
+
+                        # Otherwise add it as a whole projectile for the next frame
+                        else:
+                            next_projectiles.append(proj)
+
+                    # Normal projectiles are sliced immediately into halves
+                    case ProjectileKind.NORMAL:
+                        self.score += 1
+                        next_projectiles.extend(_split(proj))
 
             # If the slice does not intersect the projectile, it survives to the next frame as is
             else:
