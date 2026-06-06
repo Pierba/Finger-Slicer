@@ -85,6 +85,10 @@ webcam read → mirror → MediaPipe hand detect → update fingertip trail
 You have **3 lives**. Letting a normal projectile fall off-screen unsliced marks a red ✗ and
 costs a life — three misses ends the run.
 
+> 🔊 **Sound:** a slice sound plays every time you cut a projectile, and a game-over sound
+> plays once when your last life is lost. Effects are pre-decoded and mixed through a single
+> always-open audio stream, so overlapping slices never glitch or lag.
+
 ---
 
 ## 📦 Project structure
@@ -100,7 +104,8 @@ Finger-Slicer/
 │   │   └── segment_utils.py          # Mask processing, CLI, saving helpers
 │   └── gameplay/
 │       ├── gameplay.py               # Stage 2: main game loop
-│       └── gameplay_utils.py         # Projectiles, physics, rendering, hand-tracking setup
+│       └── gameplay_utils.py         # Projectiles, physics, rendering, audio, hand-tracking setup
+├── sounds/                           # Gameplay sound effects (slice, game over)
 ├── assets/                           # Generated sprites land here (the game's "fruit")
 ├── previews/                         # Segmentation preview maps
 └── .temp/                            # Auto-downloaded model weights
@@ -117,7 +122,8 @@ Model weights are **downloaded automatically on first use** and cached in `.temp
 
 - **Python 3.10+** (the code uses `match` statements and modern type syntax)
 - A **webcam**
-- The dependencies in `requirements.txt` (PyTorch, Ultralytics, MediaPipe, OpenCV, CustomTkinter…)
+- The dependencies in `requirements.txt` (PyTorch, Ultralytics, MediaPipe, OpenCV, CustomTkinter,
+  sounddevice, SoundFile, NumPy)
 
 A CUDA GPU or Apple Silicon (MPS) will speed up segmentation, but everything runs on CPU too —
 the device is detected automatically.
@@ -237,6 +243,7 @@ logic. A few you might want to play with:
 | `GRAVITY`, `LAUNCH_VX_RANGE`, `LAUNCH_VY_RANGE` | Projectile physics and arc |
 | `CAM_WIDTH`, `CAM_HEIGHT`, `CAM_FPS` | Requested webcam capture mode |
 | `SMALL_OBJECT_THRESHOLD`, `BACKGROUND_THRESHOLD`, `SUBPART_OVERLAP_THRESHOLD` | SAM auto-mode filtering |
+| `BLADE_SLICE_SOUND`, `GAME_OVER_SOUND` | Sound-effect files used during play |
 
 ---
 
@@ -247,6 +254,7 @@ logic. A few you might want to play with:
 - **[OpenCV](https://opencv.org/)** — webcam capture, image processing, and rendering
 - **[PyTorch](https://pytorch.org/)** — model inference backend (CUDA / MPS / CPU)
 - **[CustomTkinter](https://github.com/TomSchimansky/CustomTkinter)** — the launcher GUI
+- **[sounddevice](https://python-sounddevice.readthedocs.io/)** + **[SoundFile](https://python-soundfile.readthedocs.io/)** — low-latency sound-effect playback
 - **[NumPy](https://numpy.org/)** — mask math and alpha compositing
 
 ---
