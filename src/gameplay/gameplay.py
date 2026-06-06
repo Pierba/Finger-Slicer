@@ -89,6 +89,7 @@ def main():
 
     # Initialize game state and start the main loop
     state = GameState()
+    init_audio()    # open the audio device now so the first slice doesn't hitch
     start = time.monotonic()
     WIN   = "Finger Slicer (Q to quit)"
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
@@ -116,13 +117,21 @@ def main():
                 tip = (int(lm.x * W), int(lm.y * H))
 
             # == game step =============================================
+            # Snapshot the game-over state before stepping so we can tell when
+            # this frame is the one that flips it true
+            was_over = state.game_over()
+
             # Only update the game state if it's not game over
-            if not state.game_over():
+            if not was_over:
                 state.update_trail(tip)
                 state.maybe_spawn(sprites, W, H)
                 state.step(W, H)
                 state.detect_slices()
                 state.frame_count += 1
+
+            # Play the game-over sound once, on the transition into game over
+            if state.game_over() and not was_over:
+                play_sound(GAME_OVER_SOUND)
 
             # == render ================================================
             # Draw projectiles first so they appear behind the blade and HUD

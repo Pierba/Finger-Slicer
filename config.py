@@ -133,3 +133,14 @@ COMBO_OUTLINE_THICKNESS = 4
 COMBO_SLOWMO_DURATION  = 20     # frames of slow-motion granted per combo hit
 COMBO_SLOWMO_FACTOR    = 0.35   # physics time-scale while slow-motion is active
 COMBO_MAX_HITS         = 10      # hits before the combo finally splits like normal fruit
+
+# =============================================================================
+# AUDIO CONFIGS
+# =============================================================================
+
+# Folder holding the gameplay sound effects
+SOUNDS_DIR        = Path(__file__).parent / "sounds"
+
+# Played whenever a projectile is split, and once when the game ends
+BLADE_SLICE_SOUND = SOUNDS_DIR / "blade_slice.mp3"
+GAME_OVER_SOUND   = SOUNDS_DIR / "game_over.mp3"
