@@ -315,14 +315,18 @@ def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]]):
         win_title = f"Save as '{filename}'? Y = save |ESC = stop |Other keys = skip"
         cv2.imshow(win_title, preview)
         key = cv2.waitKey(0) & 0xFF
-        cv2.destroyWindow(win_title)
 
-        if key == 27:                 # ESC — stop immediately
+        # Clean up the window after key press to prevent cluttering the screen
+        window_closed = cv2.getWindowProperty(win_title, cv2.WND_PROP_VISIBLE) < 1
+        if not window_closed:
+            cv2.destroyWindow(win_title)
+
+        if key == 27 or window_closed:  # ESC or closed window — stop immediately
             print("\t X  review cancelled.")
             break
-        elif key == ord('y'):
+        elif key == ord('y'):           # Y key — save the image
             path   = DEFAULT_OUTPUT_DIR / f"{filename}.png"
             cv2.imwrite(str(path), canvas)
             print(f"\t V  saved  {filename}")
-        else:
+        else:                           # Any other key — skip this image and continue 
             print(f"\t -  skipped  {filename}")

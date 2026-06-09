@@ -86,8 +86,7 @@ You have **3 lives**. Letting a normal projectile fall off-screen unsliced marks
 costs a life — three misses ends the run.
 
 > 🔊 **Sound:** a slice sound plays every time you cut a projectile, and a game-over sound
-> plays once when your last life is lost. Effects are pre-decoded and mixed through a single
-> always-open audio stream, so overlapping slices never glitch or lag.
+> plays once when your last life is lost.
 
 ---
 
@@ -124,6 +123,8 @@ Model weights are **downloaded automatically on first use** and cached in `.temp
 - A **webcam**
 - The dependencies in `requirements.txt` (PyTorch, Ultralytics, MediaPipe, OpenCV, CustomTkinter,
   sounddevice, SoundFile, NumPy)
+- On **Linux**, a few **system libraries** (such as PortAudio and Tk) are not bundled in the wheels —
+  see [System libraries (Linux)](#system-libraries-linux) below
 
 A CUDA GPU or Apple Silicon (MPS) will speed up segmentation, but everything runs on CPU too —
 the device is detected automatically.
@@ -145,6 +146,26 @@ source .venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 ```
+
+### System libraries (Linux)
+
+A few of the Python packages above wrap **native libraries that their Linux wheels
+don't bundle** — `pip` installs the Python side, but the underlying C library has to
+come from your system package manager. On **Windows and macOS** these ship inside the
+wheels, so this step is **Linux-only**.
+
+```bash
+# Debian / Ubuntu
+sudo apt install libportaudio2 libsndfile1 python3-tk libgl1 libglib2.0-0
+```
+
+| System library | Required by | Error if missing |
+| --- | --- | --- |
+| `libportaudio2` | `sounddevice` (sound playback) | `OSError: PortAudio library not found` |
+| `libsndfile1` | `soundfile` (decoding the sound files) | `OSError: cannot load library 'libsndfile…'` |
+| `python3-tk` (Tk/Tcl) | `customtkinter` → `tkinter` (the launcher GUI) | `ModuleNotFoundError: No module named '_tkinter'` |
+| `libgl1` | `opencv-python` / `mediapipe` (OpenGL runtime) | `ImportError: libGL.so.1: cannot open shared object file` |
+| `libglib2.0-0` | `opencv-python` (GLib/GThread) | `ImportError: libgthread-2.0.so.0: cannot open shared object file` |
 
 ### Run it
 

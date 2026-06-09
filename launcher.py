@@ -256,7 +256,8 @@ class LauncherApp:
         if self.model_type.get() == "sam" and self.interactive.get():
             cmd.append("-i")
 
-        # Launch the segmentation script in a new console window so it can show its own output
+        # Launch the segmentation script as a child process so its output shows
+        # in the launcher's console (a separate console window on Windows)
         try:
             self._segment_proc = subprocess.Popen(
                 cmd, creationflags=NEW_CONSOLE_FLAG, cwd=str(ROOT_DIR))
@@ -339,7 +340,7 @@ class LauncherApp:
 
     def _run_gameplay(self):
         """
-        Runs the gameplay script in a new console window and closes the launcher.
+        Runs the gameplay script with the params within the config file.
         """
         try:
             subprocess.Popen(
@@ -349,9 +350,6 @@ class LauncherApp:
             messagebox.showerror("Launch failed", str(exc))
             return
 
-        # Launcher menu can be closed
-        self.root.destroy()
-
 
 def main():
     """
@@ -359,7 +357,12 @@ def main():
     """
     root = ctk.CTk()
     LauncherApp(root)
-    root.mainloop()
+
+    # Handler for SIGINT for gracefull closure
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        root.destroy()
 
 
 if __name__ == "__main__":
