@@ -109,6 +109,7 @@ _sound_cache: dict[Path, tuple[np.ndarray, int]] = {}
 _audio_lock                              = threading.Lock()
 _voices: list[list]                      = []      # currently-playing sounds, each a [samples, cursor] pair
 _audio_stream: Optional[sd.OutputStream] = None    # the shared sounddevice.OutputStream, opened on first use
+_muted                                   = False   # when True, play_sound() drops new sounds (toggled with 'm')
 
 def _audio_callback(outdata: np.ndarray, frames: int, time_info, status) -> None:
     """
@@ -172,9 +173,24 @@ def init_audio() -> None:
     Opening the device costs ~200 ms, so warming it here at startup keeps the
     first in-game slice from hitching. Call once before the main loop.
     """
-    for path in (BLADE_SLICE_SOUND, GAME_OVER_SOUND):
+    for path in (BLADE_SLICE_SOUND, MISS_MARK_SOUND, GAME_OVER_SOUND):
         samples, fs = _decode(path)
         _ensure_stream(fs, samples.shape[1])
+
+
+def toggle_mute() -> bool:
+    """
+    Toggles game audio on/off and returns the new mute state.
+
+    Muting only stops new sounds from being queued; any already-playing voices
+    finish naturally, which on overlapping short effects is imperceptible.
+
+    Returns:
+        True if audio is now muted, False otherwise.
+    """
+    global _muted
+    _muted = not _muted
+    return _muted
 
 
 def play_sound(path: Path) -> None:
@@ -188,6 +204,10 @@ def play_sound(path: Path) -> None:
     Args:
         path: Path to the audio file to play.
     """
+    # Skip queuing entirely while muted
+    if _muted:
+        return
+
     samples, fs = _decode(path)
     _ensure_stream(fs, samples.shape[1])
 
@@ -461,6 +481,9 @@ class GameState:
                 if not p.scored and p.kind is not ProjectileKind.BOMB:
                     # Increasing the missing counter
                     self.misses += 1
+
+                    # Play the miss mark sound effect on a missed projectile
+                    play_sound(MISS_MARK_SOUND)
 
                     # Clamp to the visible frame so the X lands at the screen edge
                     # the projectile escaped through, instead of off-canvas

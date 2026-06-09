@@ -141,6 +141,6 @@ COMBO_MAX_HITS         = 10      # hits before the combo finally splits like nor
 # Folder holding the gameplay sound effects
 SOUNDS_DIR        = Path(__file__).parent / "sounds"
 
-# Played whenever a projectile is split, and once when the game ends
-BLADE_SLICE_SOUND = SOUNDS_DIR / "blade_slice.mp3"
-GAME_OVER_SOUND   = SOUNDS_DIR / "game_over.mp3"
+BLADE_SLICE_SOUND = SOUNDS_DIR / "blade_slice.mp3"  # Played when a projectile is sliced
+MISS_MARK_SOUND   = SOUNDS_DIR / "miss_mark.mp3"    # Played when a projectile is missed
+GAME_OVER_SOUND   = SOUNDS_DIR / "game_over.mp3"    # Played when the game is over
