@@ -14,6 +14,7 @@ Pipeline per frame
 Controls
 --------
   Move your hand quickly through a projectile to slice it.
+  M         Mute / unmute audio
   R         Restart (after game over)
   Q / Esc   Quit
 """
@@ -156,6 +157,11 @@ def main():
             # Quit on 'q' or Esc key
             if key in (ord('q'), 27):
                 break
+
+            # Toggle audio mute on 'm'
+            if key == ord('m'):
+                muted = toggle_mute()
+                print("Audio muted" if muted else "Audio unmuted")
 
             # Restart the game if it's over and the player presses 'r'
             if state.game_over() and key == ord('r'):

@@ -85,8 +85,9 @@ webcam read → mirror → MediaPipe hand detect → update fingertip trail
 You have **3 lives**. Letting a normal projectile fall off-screen unsliced marks a red ✗ and
 costs a life — three misses ends the run.
 
-> 🔊 **Sound:** a slice sound plays every time you cut a projectile, and a game-over sound
-> plays once when your last life is lost.
+> 🔊 **Sound:** a slice sound plays every time you cut a projectile, a miss sound marks a
+> projectile that falls off-screen, and a game-over sound plays once when your last life is lost.
+> Press `M` at any time to mute or unmute all audio.
 
 ---
 
@@ -193,6 +194,7 @@ From there you can:
 | Action | Control |
 | --- | --- |
 | Slice | Move your **index fingertip** quickly through a projectile |
+| Mute / unmute audio | `M` |
 | Restart (after game over) | `R` |
 | Quit | `Q` or `Esc` |
 
