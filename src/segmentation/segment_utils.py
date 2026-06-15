@@ -10,13 +10,13 @@ This module contains utility functions and classes for object segmentation tasks
     - Functions for saving segmented objects as transparent PNGs
 """
 import argparse
-from   config       import *
+from   config      import *
 import cv2
-from   dataclasses  import dataclass, field
-import numpy as np
-from   pathlib      import Path
+from   dataclasses import dataclass, field
+import numpy       as np
+from   pathlib     import Path
 import torch
-from   typing       import Iterable, Optional
+from   typing      import Iterable, Optional
 
 # =============================================================================
 # DEVICE DETECTION
@@ -64,23 +64,23 @@ def build_parser() -> argparse.Namespace:
         "--conf",
         type=float,
         default=DEFAULT_CONF,
-        help=f"[auto] confidence threshold  (default: {DEFAULT_CONF}).  \
-                Flat-lay/top-down product photos score 0.05-0.15;       \
-                raise to 0.25+ for standard scene photos."
+        help=(f"[auto] confidence threshold (default: {DEFAULT_CONF}). "
+              "Flat-lay/top-down product photos score 0.05-0.15; "
+              "raise to 0.25+ for standard scene photos.")
     )
     p.add_argument(
         "--yolo-model",
         type=Path,
         default=DEFAULT_YOLO_MODEL,
-        help=f"[auto] YOLO26 seg weights  (default: {DEFAULT_YOLO_MODEL})\n \
-                Alternatives: yolo26l-seg.pt  yolo26m-seg.pt  yolo26s-seg.pt"
+        help=(f"[auto] YOLO26 seg weights (default: {DEFAULT_YOLO_MODEL}). "
+              "Alternatives: yolo26l-seg.pt  yolo26m-seg.pt  yolo26s-seg.pt")
     )
     p.add_argument(
         "--sam-model",
         type=Path,
         default=DEFAULT_SAM_MODEL,
-        help=f"[sam] SAM2 weights  (default: {DEFAULT_SAM_MODEL})\n \
-                Higher quality: sam2.1_l.pt"
+        help=(f"[sam] SAM2 weights (default: {DEFAULT_SAM_MODEL}). "
+              "Higher quality: sam2.1_l.pt")
     )
 
     return p.parse_args()
@@ -94,7 +94,7 @@ def upscale_mask(raw: np.ndarray, target_wh: tuple[int, int]) -> np.ndarray:
     Resizes a float/uint8 raw `mask` to `target_wh` dimensions and makes it binary.
 
     Args:
-        raw: a float or uint8 mask (H, W) with values in [0, 1] or [0, 255].
+        raw:       a float or uint8 mask (H, W) with values in [0, 1] or [0, 255].
         target_wh: desired scale for the output mask.
 
     Returns:
@@ -149,7 +149,7 @@ def mask_to_rgba_crop(img_bgr: np.ndarray, mask: np.ndarray) -> Optional[np.ndar
 
     Args:
         img_bgr: a BGR image (H, W, 3) as a uint8 array.
-        mask: a binary uint8 mask (H, W) with values in [0, 255].
+        mask:    a binary uint8 mask (H, W) with values in [0, 255].
 
     Returns:
         A cropped RGBA image (h, w, 4) where the masked area is visible and the rest is transparent.
@@ -177,8 +177,8 @@ def overlay_mask(base: np.ndarray, mask: np.ndarray, color: tuple[int, int, int]
     Returns a BGR image with a binary `mask` overlaid on top of a `base` image, using a given `color` and `alpha` transparency.
 
     Args:
-        base: a BGR image (H, W, 3) as a uint8 array.
-        mask: a binary uint8 mask (H, W) with values in [0, 255].
+        base:  a BGR image (H, W, 3) as a uint8 array.
+        mask:  a binary uint8 mask (H, W) with values in [0, 255].
         color: a tuple of (B, G, R) values for the overlay color.
         alpha: a float in [0, 1] representing the transparency of the overlay (default: 0.45).
 
@@ -210,8 +210,8 @@ def fit_to_canvas(crop_rgba: np.ndarray, out_w: int = PROJECTILE_MAX_SIZE, out_h
 
     Args:
         crop_rgba: an RGBA image (h, w, 4) as a uint8 array.
-        out_w: output width of the canvas (default: PROJECTILE_MAX_SIZE).
-        out_h: output height of the canvas (default: PROJECTILE_MAX_SIZE).
+        out_w:     output width of the canvas (default: PROJECTILE_MAX_SIZE).
+        out_h:     output height of the canvas (default: PROJECTILE_MAX_SIZE).
 
     Returns:
         A RGBA image (out_h, out_w, 4) as uint8 array.
@@ -243,8 +243,7 @@ class InteractiveState:
     """
     All mutable variables for the interactive session.
     """
-    pos_pts:      list[tuple[int, int]] = field(default_factory=list)       # List of (x, y) coordinates for object points (positive clicks)
-    neg_pts:      list[tuple[int, int]] = field(default_factory=list)       # List of (x, y) coordinates for background points (negative clicks)
+    clicks:       list[tuple[tuple[int, int], int]] = field(default_factory=list)  # (point, label) in click order: label 1 = include, 0 = exclude
     current_mask: Optional[np.ndarray] = None                               # The current mask being previewed
     obj_count:    int = 0                                                   # Counter for segmented objects
     color_idx:    int = 0                                                   # Index for cycling through overlay colors in the palette
@@ -254,14 +253,15 @@ class InteractiveState:
 # =============================================================================
 # SAVE IMAGES [INTERACTIVE MODE]
 # =============================================================================
-def save_interactive_images(crop_rgba: np.ndarray, name: str) -> str:
+
+def save_interactive_images(crop_rgba: np.ndarray, name: str) -> Path:
     """
     Fits the `crop_rgba` onto a fixed PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE canvas and
     saves it as a transparent PNG in the assets directory with the given `name`.
 
     Args:
         crop_rgba: an RGBA image (h, w, 4) as a uint8 array to be saved.
-        name: the filename (without extension) for the saved PNG.
+        name:      the filename (without extension) for the saved PNG.
 
     Returns:
         The path to the saved PNG file.
@@ -293,8 +293,11 @@ def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]]):
         Return a (h, w, 3) BGR checkerboard used as a transparency stand-in
         when previewing RGBA crops before saving.
         """
+        # Per-pixel column (x) and row (y) index grids
         x, y   = np.meshgrid(np.arange(w), np.arange(h))
+        # Group pixels into square_size cells, then alternate 0/1 by cell parity
         checker = ((x // square_size) + (y // square_size)) % 2
+        # Fill everything with the darker grey, then paint alternate cells white
         bg = np.full((h, w, 3), 180, dtype=np.uint8)
         bg[checker == 1] = 255
         return bg
@@ -322,11 +325,13 @@ def save_auto_images(object_stream: Iterable[tuple[str, np.ndarray]]):
             cv2.destroyWindow(win_title)
 
         if key == 27 or window_closed:  # ESC or closed window — stop immediately
-            print("\t X  review cancelled.")
+            print("\t X review cancelled.")
             break
         elif key == ord('y'):           # Y key — save the image
             path   = DEFAULT_OUTPUT_DIR / f"{filename}.png"
-            cv2.imwrite(str(path), canvas)
-            print(f"\t V  saved  {filename}")
-        else:                           # Any other key — skip this image and continue 
-            print(f"\t -  skipped  {filename}")
+            if cv2.imwrite(str(path), canvas):
+                print(f"\t V saved  {filename}")
+            else:
+                print(f"\t X failed to write  {path}")
+        else:                           # Any other key — skip this image and continue
+            print(f"\t - skipped  {filename}")

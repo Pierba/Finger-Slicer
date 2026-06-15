@@ -20,23 +20,22 @@ Modes
 Usage
 -----
   python segment_objects.py photo.jpg                               # yolo auto (default)
-  python segment_objects.py photo.jpg --model_type sam              # SAM auto
-  python segment_objects.py photo.jpg --model_type sam -i           # SAM interactive
-  python segment_objects.py photo.jpg --model_type yolo --conf 0.1
+  python segment_objects.py photo.jpg --model-type sam              # SAM auto
+  python segment_objects.py photo.jpg --model-type sam -i           # SAM interactive
+  python segment_objects.py photo.jpg --model-type yolo --conf 0.1
   python segment_objects.py photo.jpg --yolo-model yolo26l-seg.pt
 """
-from pathlib import Path
+from   pathlib import Path
 import sys
-
 # Adjust the import path to include the project root
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
-from config import *
+from   config                         import *
 import cv2
-import numpy as np
-from src.segmentation.segment_utils import *
-from ultralytics import SAM, YOLO
+import numpy                          as np
+from   src.segmentation.segment_utils import *
+from   ultralytics                    import SAM, YOLO
 import uuid
 
 # =============================================================================
@@ -45,8 +44,8 @@ import uuid
 
 def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path = DEFAULT_YOLO_MODEL):
     """
-    Detects and segments objects present in `image_path` with YOLO26x-seg (default model) - or any
-    other `model_name` - using the given `conf` threshold.
+    Detects and segments objects present in `image_path` with YOLO26x-seg (default model)
+    - or any other `model_name` - using the given `conf` threshold.
 
     For each detection the pipeline is:
     - raw mask
@@ -60,20 +59,11 @@ def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path
 
     Args:
         image_path: path to the input image file.
-        conf: confidence threshold for detection.
+        conf:       confidence threshold for detection.
         model_name: path to the YOLO model file.
     """
-    # Ensure the assets directory exists
-    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
     print(f"Loading {model_name} ...")
     model = YOLO(model_name)
-
-    print(f"Segmenting '{image_path}' with conf >= {conf} ...\n")
-    result = model.predict(image_path, conf=conf, device=get_device(), verbose=False)[0]
-    if result.masks is None:
-        print("No segmentation masks returned.")
-        return
 
     img = cv2.imread(str(image_path))
     if img is None:
@@ -81,6 +71,12 @@ def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path
         return
 
     H, W = img.shape[:2]
+
+    print(f"Segmenting '{image_path}' with conf >= {conf} ...\n")
+    result = model.predict(image_path, conf=conf, device=get_device(), verbose=False)[0]
+    if not result or result.masks is None:
+        print("No segmentation masks returned.")
+        return
 
     # Extract numpy arrays from result
     masks_raw = result.masks.data.cpu().numpy()   # raw masks at model's output resolution
@@ -109,12 +105,12 @@ def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path
         # Image cropped to the mask's bounding box with transparent background
         crop = mask_to_rgba_crop(img, mask)
         if crop is None:
-            print(f"  skip  {label}: empty mask")
+            print(f"skip {label}: empty mask")
             continue
 
         # == queue for user confirmation ===================================
         name = uuid.uuid4().hex[:8]
-        print(f"  detected  {name:<12}  class={label:<15}  conf={conf_v:.2f}")
+        print(f"detected {name:<12} class={label:<15} conf={conf_v:.2f}")
         detected.append((name, crop))
 
         # == annotate preview =============================================
@@ -128,8 +124,10 @@ def run_yolo_auto(image_path: Path, conf: float = DEFAULT_CONF, model_name: Path
 
     # == always write the composite preview as a reference map =============
     prev_path = PREVIEW_DIR / "_preview_yolo_auto.png"
-    cv2.imwrite(str(prev_path), preview)
-    print(f"\nPreview -> {prev_path}")
+    if cv2.imwrite(str(prev_path), preview):
+        print(f"\nPreview -> {prev_path}")
+    else:
+        print(f"\nWarning: could not write preview to {prev_path}")
 
 
 # =============================================================================
@@ -142,32 +140,23 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     Unlike YOLO, SAM2 has no concept of object classes, therefore it returns every mask it finds.
     Each raw mask is first cleaned up, then it goes through
     three filtering steps to remove noise and duplicates:
-    - Upscale       upscale_mask() resizes to original dimensions with bilinear
-                    interpolation + re-threshold.
+    - Upscale:      upscale_mask() resizes to original dimensions with bilinear interpolation + re-threshold.
 
-    - Refine        refine_mask() closes holes, removes specks, and keeps only
-                    the largest connected component.
+    - Refine:       refine_mask() closes holes, removes specks, and keeps only the largest connected component.
 
-    - Size          drops masks whose bounding box is smaller than
-                    SMALL_OBJECT_THRESHOLD in either dimension.
+    - Size:         drops masks whose bounding box is smaller than SMALL_OBJECT_THRESHOLD in either dimension.
 
-    - Background    drops masks whose actual pixel count is greater than
-                    BACKGROUND_THRESHOLD of the total image pixel area.
+    - Background:   drops masks whose actual pixel count is greater than BACKGROUND_THRESHOLD of the total image pixel area.
 
-    - Sub-part      sorts survivors by pixel area in descending order; if a
-                    smaller mask's pixel-level intersection with a larger one
-                    exceeds SUBPART_OVERLAP_THRESHOLD it is discarded.
+    - Sub-part:     sorts survivors by pixel area in descending order;
+                    if a smaller mask's pixel-level intersection with a larger one exceeds SUBPART_OVERLAP_THRESHOLD it is discarded.
 
-    Surviving objects are saved as transparent PNGs and the preview image
-    (_preview_sam_auto.png) is saved in `PREVIEW_DIR`.
+    Surviving objects are saved as transparent PNGs and the preview image (_preview_sam_auto.png) is saved in `PREVIEW_DIR`.
 
     Args:
         image_path: path to the input image file.
         model_name: path to the SAM model file.
     """
-    # Ensure the assets directory exists
-    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
     print(f"Loading {model_name}...")
     model = SAM(model_name)
 
@@ -179,9 +168,9 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     H, W = img.shape[:2]
     total_image_area = W * H
 
-    print(f"Generating masks with SAM2...")
+    print("Generating masks with SAM2...")
     result = model.predict(image_path, device=get_device(), verbose=False)[0]
-    if result.masks is None:
+    if not result or result.masks is None:
         print("No objects detected in the image.")
         return
 
@@ -199,7 +188,7 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
 
         # == minimum size check ===============================================
         x, y, w, h = cv2.boundingRect(alpha)
-        if (w == 0 or h == 0) or (w <= SMALL_OBJECT_THRESHOLD or h <= SMALL_OBJECT_THRESHOLD):
+        if w <= SMALL_OBJECT_THRESHOLD or h <= SMALL_OBJECT_THRESHOLD:
             continue
 
         # == background rejection check =======================================
@@ -225,8 +214,19 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
         is_subpart = False
 
         for saved in final_objects:
-            # Pixel-level intersection: count pixels that are lit in BOTH masks
-            pixel_intersection = int(np.logical_and(cand["alpha"] > 0, saved["alpha"] > 0).sum())
+            # Shared pixels can only lie inside the overlap of the two bounding boxes,
+            # so skip the costly mask and when the boxes are disjoint and crop to it otherwise
+            ix0 = max(cand["x"], saved["x"])
+            iy0 = max(cand["y"], saved["y"])
+            ix1 = min(cand["x"] + cand["w"], saved["x"] + saved["w"])
+            iy1 = min(cand["y"] + cand["h"], saved["y"] + saved["h"])
+            if ix1 <= ix0 or iy1 <= iy0:
+                continue
+
+            # Count pixels lit in both masks, within that overlap rectangle only
+            a = cand["alpha"][iy0:iy1, ix0:ix1] > 0
+            b = saved["alpha"][iy0:iy1, ix0:ix1] > 0
+            pixel_intersection = int(np.logical_and(a, b).sum())
             if pixel_intersection == 0:
                 continue
 
@@ -259,7 +259,7 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
             continue
 
         name = uuid.uuid4().hex[:8]
-        print(f" detected  {name}")
+        print(f"detected {name}")
         detected.append((name, crop))
 
         # Annotate composite preview with mask overlay and label
@@ -273,8 +273,10 @@ def run_sam_auto(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
 
     # == always write the composite preview as a reference map =============
     prev_path = PREVIEW_DIR / "_preview_sam_auto.png"
-    cv2.imwrite(str(prev_path), preview)
-    print(f"\n{len(final_objects)} object(s) reviewed, preview -> {prev_path}")
+    if cv2.imwrite(str(prev_path), preview):
+        print(f"\n{len(final_objects)} object(s) reviewed, preview -> {prev_path}")
+    else:
+        print(f"\nWarning: could not write preview to {prev_path}")
 
 
 # =============================================================================
@@ -290,13 +292,10 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     - Right-click  Negative point (exclude / background)
     - S            Run SAM2 segmentation with current points
     - Enter        Save current mask as transparent PNG
-    - N            Clear points & mask - retry current object
-    - U            Undo last point
+    - C            Clear points & mask - retry current object
+    - Z            Undo last point
     - Q / Esc      Quit
     """
-    # Ensure the assets directory exists
-    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
     print(f"Loading {model_name} ...")
     model = SAM(model_name)
 
@@ -322,11 +321,11 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     # == HUD rendering ====================================================
     def draw_hud(canvas: np.ndarray, lines: list[str]):
         """
-        Renders text `lines` with a black backing rectangle onto `canvas` in-place.
+        Renders text `lines` with a black background onto `canvas` in-place.
 
         Args:
             canvas: the image to draw on.
-            lines: list of text lines to render.
+            lines:  list of text lines to render.
         """
         font, scale, thick, pad = cv2.FONT_HERSHEY_SIMPLEX, 0.55, 1, 4  # HUD text style params
         y = 20  # initial y position for the first line
@@ -353,10 +352,9 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
         disp = cv2.resize(canvas, (disp_w, disp_h), interpolation=cv2.INTER_AREA)
 
         # Draw click dots and HUD `after` downscaling so they are always rendered at a fixed pixel size regardless of image resolution
-        for p in state.pos_pts:
-            cv2.circle(disp, (int(p[0] * scale), int(p[1] * scale)), 7, (0, 230, 80), -1)
-        for p in state.neg_pts:
-            cv2.circle(disp, (int(p[0] * scale), int(p[1] * scale)), 7, (30, 30, 220), -1)
+        for (px, py), label in state.clicks:
+            color = (0, 230, 80) if label == 1 else (30, 30, 220)
+            cv2.circle(disp, (int(px * scale), int(py * scale)), 7, color, -1)
 
         draw_hud(disp, [
             f"Object #{state.obj_count + 1}   saved: {state.obj_count}",
@@ -368,16 +366,15 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
 
     # == mouse events ======================================================
     def on_mouse(event: int, x: int, y: int, _flags, _param):
-        # x, y arrive in display space — convert back to original image space
-        # before storing so that SAM receives the correct coordinates
+        # x, y arrives in display space — convert back to original image space before storing so that SAM receives the correct coordinates
         ix, iy = int(x / scale), int(y / scale)
         match event:
             case cv2.EVENT_LBUTTONDOWN:
-                state.pos_pts.append((ix, iy))
+                state.clicks.append(((ix, iy), 1))
                 state.current_mask = None
                 state.status = f"+ positive ({ix},{iy}) — press S to segment"
             case cv2.EVENT_RBUTTONDOWN:
-                state.neg_pts.append((ix, iy))
+                state.clicks.append(((ix, iy), 0))
                 state.current_mask = None
                 state.status = f"- negative ({ix},{iy}) — press S to segment"
         redraw()
@@ -389,7 +386,7 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
         """
         Runs SAM2 with current points and updates the current mask.
         """
-        if not state.pos_pts and not state.neg_pts:
+        if not state.clicks:
             state.status = "Add at least one point first !!!"
             return
 
@@ -397,20 +394,23 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
 
         # SAM2 expects lists of points and labels, so we combine positive and negative points into single lists
         # The model will treat points with label 1 as "include in object" and points with label 0 as "exclude / background"
-        all_pts = state.pos_pts + state.neg_pts
-        all_lbl = [1] * len(state.pos_pts) + [0] * len(state.neg_pts)
+        all_pts, all_lbl = [], []
+        for pt, lbl in state.clicks:
+            all_pts.append(pt)
+            all_lbl.append(lbl)
 
         try:
-            res = model.predict(image_path, points=[all_pts], labels=[all_lbl], device=get_device(), verbose=False)
+            result = model.predict(image_path, points=[all_pts], labels=[all_lbl], device=get_device(), verbose=False)
         except Exception as exc:
             state.status = f"SAM2 error: {exc}"
             return
 
-        if not res or res[0].masks is None:
+        if not result or result[0].masks is None:
             state.status = "No mask returned — try more / different points"
             return
 
-        masks_data = res[0].masks.data.cpu().numpy()
+        masks_data = result[0].masks.data.cpu().numpy()
+        del result
         if masks_data.size == 0:
             state.status = "No mask returned — try different points"
             return
@@ -424,7 +424,7 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
     # == save logic ================================================
     def _do_save():
         """
-        Crops the current mask and saves the PNG as 'object_<n>.png'.
+        Crops the current mask and saves the PNG as 'uuid.png'.
         """
         if state.current_mask is None:
             state.status = "No mask yet — press S first"
@@ -444,8 +444,7 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
         # Updating the state for the next segmentation
         state.obj_count  += 1
         state.color_idx  += 1
-        state.pos_pts.clear()
-        state.neg_pts.clear()
+        state.clicks.clear()
         state.current_mask = None
         state.status = "Saved! Click the next object."
 
@@ -480,16 +479,13 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
             _do_save()
             redraw()
         elif key == ord('c'):           # C to clear
-            state.pos_pts.clear()
-            state.neg_pts.clear()
+            state.clicks.clear()
             state.current_mask = None
             state.status = "Cleared — click a new object"
             redraw()
         elif key == ord('z'):           # Z to undo
-            if state.neg_pts:
-                state.neg_pts.pop()
-            elif state.pos_pts:
-                state.pos_pts.pop()
+            if state.clicks:
+                state.clicks.pop()
             state.current_mask = None
             state.status = "Last point removed"
             redraw()
@@ -498,7 +494,7 @@ def run_interactive(image_path: Path, model_name: Path = DEFAULT_SAM_MODEL):
             break
 
     cv2.destroyAllWindows()
-    print(f"\n  {state.obj_count} object(s) saved to '{DEFAULT_OUTPUT_DIR}/'")
+    print(f"\n{state.obj_count} object(s) saved to '{DEFAULT_OUTPUT_DIR}/'")
 
 def main():
     """
@@ -518,6 +514,11 @@ def main():
     if not image.is_file():
         print(f"Error: Image not found at path '{image}'")
         return
+
+    # Ensure the weights, assets and previews directories exist
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
     # Branch the execution based on the selected model type and mode
     match model_type:

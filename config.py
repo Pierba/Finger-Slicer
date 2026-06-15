@@ -9,12 +9,15 @@ from pathlib import Path
 # =============================================================================
 
 # Paths for output images
-DEFAULT_OUTPUT_DIR = Path(__file__).parent / "assets"
-PREVIEW_DIR      = Path(__file__).parent / "previews"
+ROOT_DIR           = Path(__file__).parent
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "assets"
+PREVIEW_DIR        = ROOT_DIR / "previews"
+WEIGHTS_DIR        = ROOT_DIR / "weights"
 
 # YOLO / SAM model weights
-DEFAULT_YOLO_MODEL = Path(__file__).parent / ".temp" / "yolo26x-seg.pt"
-DEFAULT_SAM_MODEL  = Path(__file__).parent / ".temp" / "sam2.1_b.pt"
+SEGMENT_PATH       = ROOT_DIR / "src/segmentation/segment_objects.py"
+DEFAULT_YOLO_MODEL = WEIGHTS_DIR / "yolo26x-seg.pt"
+DEFAULT_SAM_MODEL  = WEIGHTS_DIR / "sam2.1_b.pt"
 
 # =============================================================================
 # YOLO AUTO-MODE THRESHOLDS
@@ -64,10 +67,19 @@ HAND_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
     "hand_landmarker/float16/1/hand_landmarker.task"
 )
-HAND_MODEL_PATH = Path(__file__).parent / ".temp" / "hand_landmarker.task"
+HAND_MODEL_PATH = WEIGHTS_DIR / "hand_landmarker.task"
+
+# MediaPipe hand landmarks — 21 points, grouped by hand area:
+#   0      wrist
+#   1-4    thumb         (CMC, MCP, IP, TIP)
+#   5-8    index finger  (MCP, PIP, DIP, TIP)
+#   9-12   middle finger (MCP, PIP, DIP, TIP)
+#   13-16  ring finger   (MCP, PIP, DIP, TIP)
+#   17-20  pinky         (MCP, PIP, DIP, TIP)
+# Each finger's TIP is the last of its four
 
 # Landmark index of the index-finger tip (the point we want to highlight)
-INDEX_FINGERTIP = 8
+FINGERTIP = 8
 
 # Minimum confidence for the hand detection to be considered successful
 HAND_DETECT_CONFIDENCE = 0.6
@@ -84,63 +96,73 @@ CAM_FPS    = 60
 # =============================================================================
 # GAMEPLAY CONFIGS
 # =============================================================================
+GAMEPLAY_PATH = ROOT_DIR / "src/gameplay/gameplay.py"
 
 # Folder we pull RGBA projectile sprites from (same place segment_objects.py saves to)
-ASSETS_DIR            = DEFAULT_OUTPUT_DIR
+ASSETS_DIR    = DEFAULT_OUTPUT_DIR
 
 # Longest side of a projectile in pixels. Segmented objects are fitted directly onto a
 # PROJECTILE_MAX_SIZE x PROJECTILE_MAX_SIZE transparent canvas when saved, so sprites
 # already load at game scale — no second downscale at gameplay time
-PROJECTILE_MAX_SIZE   = 180
+PROJECTILE_MAX_SIZE = 180
 
 # Physics (units: pixels per frame at CAM_FPS)
-GRAVITY               = 0.6
-LAUNCH_VX_RANGE       = (2.0, 6.0)      # absolute; sign is chosen at spawn to arc toward center
-LAUNCH_VY_RANGE       = (-30.0, -25.0)  # negative = upward kick; sized so apex lands in the upper third of the frame
-SPIN_RANGE            = (-6.0, 6.0)     # degrees per frame
+GRAVITY             = 0.6
+LAUNCH_VX_RANGE     = (2.0, 6.0)      # absolute; sign is chosen at spawn to arc toward center
+LAUNCH_VY_RANGE     = (-30.0, -25.0)  # negative = upward kick; sized so apex lands in the upper third of the frame
+SPIN_RANGE          = (-6.0, 6.0)     # degrees per frame
 
-# A new projectile spawns every N frames (~1.2s at 30fps)
+# A new projectile spawns every N frames
 # Lower = harder
 SPAWN_INTERVAL_FRAMES = 35
 
 # Slicing
-TRAIL_LEN             = 6       # fingertip positions kept for the "blade" polyline
-MIN_SLICE_SPEED       = 18      # px between two samples; resting your finger should not slice
-SLICE_HITBOX_SHRINK   = 0.6     # shrink the sprite bbox to this fraction for hit testing
-SLICE_KICK            = 6.0     # horizontal split velocity given to each half on slice
-SLICE_SPIN_BOOST      = 8.0     # extra angular velocity given to each half
+TRAIL_LEN               = 6       # fingertip positions kept for the "blade" polyline
+MIN_SLICE_SPEED         = 18      # px between two samples; resting your finger should not slice
+SLICE_HITBOX_SHRINK     = 0.6     # shrink the sprite bbox to this fraction for hit testing
+SLICE_KICK              = 6.0     # horizontal split velocity given to each half on slice
+SLICE_SPIN_BOOST        = 8.0     # extra angular velocity given to each half
 
 # Game over after this many unsliced projectiles fall off-screen
-MAX_MISSES            = 3
+MAX_MISSES              = 3
 
 # Red "X" mark drawn where a projectile leaves the screen unsliced
-MISS_MARK_LIFETIME    = 30      # frames the mark stays visible (~1s at 30fps)
-MISS_MARK_SIZE        = 28      # half-length of each diagonal stroke, in pixels
-MISS_MARK_THICKNESS   = 5       # stroke thickness
-MISS_MARK_COLOR       = (0, 0, 255)  # BGR — red
+MISS_MARK_LIFETIME      = 30      # frames the mark stays visible
+MISS_MARK_SIZE          = 28      # half-length of each diagonal stroke, in pixels
+MISS_MARK_THICKNESS     = 5       # stroke thickness
+MISS_MARK_COLOR         = (0, 0, 255)  # BGR — red
 
 # Bombs: occasionally a spawn is a "bomb" (red outline)
 # Slicing one ends the game
-BOMB_SPAWN_CHANCE     = 0.15    # probability a given spawn is a bomb
-BOMB_OUTLINE_COLOR    = (0, 0, 255)  # BGR — red
-BOMB_OUTLINE_THICKNESS = 4
+BOMB_SPAWN_CHANCE       = 0.15    # probability a given spawn is a bomb
+BOMB_OUTLINE_COLOR      = (0, 0, 255)  # BGR — red
+BOMB_OUTLINE_THICKNESS  = 4
 
 # Combo: occasionally a spawn is a "combo" (yellow outline)
 # Each hit scores and refreshes a slow-motion effect
-COMBO_SPAWN_CHANCE     = 0.10
-COMBO_OUTLINE_COLOR    = (0, 255, 255)  # BGR — yellow
+COMBO_SPAWN_CHANCE      = 0.10
+COMBO_OUTLINE_COLOR     = (0, 255, 255)  # BGR — yellow
 COMBO_OUTLINE_THICKNESS = 4
-COMBO_SLOWMO_DURATION  = 20     # frames of slow-motion granted per combo hit
-COMBO_SLOWMO_FACTOR    = 0.35   # physics time-scale while slow-motion is active
-COMBO_MAX_HITS         = 10      # hits before the combo finally splits like normal fruit
+COMBO_SLOWMO_DURATION   = 40     # frames of slow-motion granted per combo hit
+COMBO_SLOWMO_FACTOR     = 0.25   # physics time-scale while slow-motion is active
+COMBO_MAX_HITS          = 10      # hits before the combo finally splits like normal fruit
 
 # =============================================================================
 # AUDIO CONFIGS
 # =============================================================================
 
 # Folder holding the gameplay sound effects
-SOUNDS_DIR        = Path(__file__).parent / "sounds"
-
+SOUNDS_DIR        = ROOT_DIR / "sounds"
 BLADE_SLICE_SOUND = SOUNDS_DIR / "blade_slice.mp3"  # Played when a projectile is sliced
 MISS_MARK_SOUND   = SOUNDS_DIR / "miss_mark.mp3"    # Played when a projectile is missed
 GAME_OVER_SOUND   = SOUNDS_DIR / "game_over.mp3"    # Played when the game is over
+
+# Throw sounds; maybe_spawn() plays one at random each time a projectile is launched
+THROW_SOUNDS = [
+    SOUNDS_DIR / "throw_1.mp3",
+    SOUNDS_DIR / "throw_2.mp3",
+]
+
+# The sound files could have different sample rates, but the shared mixer stream runs at a single rate,
+# so every sound is resampled to this on load
+AUDIO_SAMPLE_RATE = 44100

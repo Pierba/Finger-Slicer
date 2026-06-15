@@ -18,21 +18,21 @@ Controls
   R         Restart (after game over)
   Q / Esc   Quit
 """
-from pathlib import Path
+from   pathlib import Path
 import sys
-
 # Adjust the import path to include the project root
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
-from config import *
+from   config                      import *
 import cv2
-import mediapipe as mp
-from mediapipe.tasks import python as mp_python
-from mediapipe.tasks.python import vision as mp_vision
-from src.gameplay.gameplay_utils import *
+import numpy                       as np
+import mediapipe                   as mp
+from   mediapipe.tasks             import python as mp_python
+from   mediapipe.tasks.python      import vision as mp_vision
+from   src.gameplay.gameplay_utils import *
 import time
-from typing import Optional
+from   typing                      import Optional
 
 # =============================================================================
 # MAIN
@@ -42,11 +42,16 @@ def main():
     """
     Main game loop.
     """
+
+    # Ensure the weights and assets directories exist
+    WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+
     # Load projectile sprites from the assets directory
     sprites = load_assets()
     if not sprites:
         # Without sprites there is nothing to throw, so warn and exit out
-        png_count = len(list(ASSETS_DIR.glob("*.png"))) if ASSETS_DIR.exists() else 0
+        png_count = len(list(ASSETS_DIR.glob("*.png")))
         if png_count == 0:
             message = (f"No images found in:\n{ASSETS_DIR}\n\n"
                        "Run 'Segment Objects' first to create some sprites.")
@@ -61,13 +66,27 @@ def main():
 
     # MediaPipe hand-landmarker setup
     model_path = load_model()
-    options = mp_vision.HandLandmarkerOptions(
-        base_options=mp_python.BaseOptions(model_asset_path=str(model_path)),
-        running_mode=mp_vision.RunningMode.VIDEO,
-        num_hands=1,
-        min_hand_detection_confidence=HAND_DETECT_CONFIDENCE,
-        min_tracking_confidence=HAND_TRACK_CONFIDENCE,
-    )
+
+    def _make_options(delegate):
+        return mp_vision.HandLandmarkerOptions(
+            base_options=mp_python.BaseOptions(
+                model_asset_path=str(model_path), delegate=delegate),
+            running_mode=mp_vision.RunningMode.VIDEO,
+            num_hands=1,
+            min_hand_detection_confidence=HAND_DETECT_CONFIDENCE,
+            min_tracking_confidence=HAND_TRACK_CONFIDENCE,
+        )
+
+    # Run hand tracking on the GPU when one is available, falling back to CPU
+    Delegate = mp_python.BaseOptions.Delegate
+    use_gpu  = get_device().type != "cpu"
+    try:
+        landmarker = mp_vision.HandLandmarker.create_from_options(
+            _make_options(Delegate.GPU if use_gpu else Delegate.CPU))
+        print(f"Hand tracking delegate: {'GPU' if use_gpu else 'CPU'}")
+    except Exception as exc:
+        print(f"GPU delegate unavailable ({exc}); using CPU")
+        landmarker = mp_vision.HandLandmarker.create_from_options(_make_options(Delegate.CPU))
 
     # Index 0 = default system webcam
     cap = cv2.VideoCapture(0)
@@ -85,8 +104,13 @@ def main():
     H = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     FPS = cap.get(cv2.CAP_PROP_FPS)
 
-    print(f"Webcam mode: {H}x{W} @ {FPS:.1f} fps "
+    print(f"Webcam mode: {W}x{H} @ {FPS:.1f} fps "
           f"(requested {CAM_WIDTH}x{CAM_HEIGHT} @ {CAM_FPS} fps)")
+
+    # Buffers reused every frame to avoid a fresh allocation per frame:
+    # one holds the mirrored frame, one holds MediaPipe's RGBA input
+    flip_buf = np.empty((H, W, 3), dtype=np.uint8)
+    rgba_buf = np.empty((H, W, 4), dtype=np.uint8)
 
     # Initialize game state and start the main loop
     state = GameState()
@@ -95,26 +119,28 @@ def main():
     WIN   = "Finger Slicer (Q to quit)"
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
 
-    with mp_vision.HandLandmarker.create_from_options(options) as landmarker:
+    with landmarker:
         while True:
             # Read a frame from the webcam
             ok, frame = cap.read()
             if not ok:
                 break
 
-            # Mirror so the on-screen image acts like a mirror to the player
-            frame = cv2.flip(frame, 1)
+            # Mirror into the reused buffer so the on-screen image acts like a mirror
+            cv2.flip(frame, 1, dst=flip_buf)
+            frame = flip_buf
 
             # == fingertip detection ===================================
-            rgba         = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
-            mp_image     = mp.Image(image_format=mp.ImageFormat.SRGBA, data=rgba)
+            # Convert into the reused RGBA buffer (no per-frame allocation)
+            cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA, dst=rgba_buf)
+            mp_image     = mp.Image(image_format=mp.ImageFormat.SRGBA, data=rgba_buf)
             timestamp_ms = int((time.monotonic() - start) * 1000)
             result       = landmarker.detect_for_video(mp_image, timestamp_ms)
 
             # Extract the index fingertip position (if a hand is detected)
             tip: Optional[tuple[int, int]] = None
             if result.hand_landmarks:
-                lm  = result.hand_landmarks[0][INDEX_FINGERTIP]
+                lm  = result.hand_landmarks[0][FINGERTIP]
                 tip = (int(lm.x * W), int(lm.y * H))
 
             # == game step =============================================

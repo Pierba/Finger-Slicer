@@ -10,17 +10,17 @@ This module contains utility functions and classes for gameplay mechanics, inclu
 - Rendering functions (miss marks, blade, HUD, game over screen)
 - Gameplay helpers (sprite rotation and alpha compositing)
 """
-from collections import deque
-from config import *
+from   collections    import deque
+from   config         import *
 import cv2
-from dataclasses import dataclass, field
-from enum import Enum, auto
-import numpy as np
-from pathlib import Path
+from   dataclasses    import dataclass, field
+from   enum           import Enum, auto
+import numpy          as np
+from   pathlib        import Path
 import random
-import sounddevice as sd
+import sounddevice    as sd
 import threading
-from typing import Optional
+from   typing         import Optional
 import urllib.request
 
 # =============================================================================
@@ -33,15 +33,49 @@ def load_model() -> Path:
         The absolute path to the local `hand_landmarker.task` file.
     """
     if not HAND_MODEL_PATH.exists():
-        # Create directory if it doesn't exist
-        HAND_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
         print(f"Downloading hand_landmarker model to {HAND_MODEL_PATH} ...")
         urllib.request.urlretrieve(HAND_MODEL_URL, HAND_MODEL_PATH)
     return HAND_MODEL_PATH
 
+
+def get_device():
+    """
+    Returns the best available torch device (CUDA GPU, Apple MPS, or CPU).
+    Mirrors segment_utils.get_device so the gameplay module stays independent of
+    the segmentation one. torch is imported lazily, only when the game starts.
+    """
+    import torch
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
 # =============================================================================
 # ASSET LOADING
 # =============================================================================
+
+def trim_rgba(sprite: np.ndarray) -> Optional[np.ndarray]:
+    """
+    Crops an RGBA `sprite` tightly to the bounding box of its non-zero alpha pixels.
+    Strips the padding so projectiles get a tight hitbox.
+
+    Returns:
+        The cropped RGBA sprite as a NumPy array, or None if the alpha channel is fully empty.
+    """
+    # If the image doesn't have an alpha channel, return it as is
+    if sprite.ndim != 3 or sprite.shape[2] < 4:
+        return sprite
+
+    # Find the bounding box of non-transparent pixels in the alpha channel
+    ys, xs = np.where(sprite[:, :, 3] > 0)
+    if len(xs) == 0:
+        return None
+
+    # Crop the sprite to the bounding box and return it
+    return sprite[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
+
 
 def load_assets() -> list[np.ndarray]:
     """
@@ -72,7 +106,7 @@ def load_assets() -> list[np.ndarray]:
     return sprites
 
 
-def show_warning(title: str, message: str) -> None:
+def show_warning(title: str, message: str):
     """
     Pops up a modal warning dialog and blocks until the user dismisses it.
 
@@ -88,7 +122,7 @@ def show_warning(title: str, message: str) -> None:
     print(f"{title}: {message}")
     try:
         import tkinter as tk
-        from tkinter import messagebox
+        from   tkinter import messagebox
 
         root = tk.Tk()
         root.withdraw()                     # hide the empty root window
@@ -102,80 +136,87 @@ def show_warning(title: str, message: str) -> None:
 # AUDIO
 # =============================================================================
 
-# Cache of decoded sounds so each file is read and decoded from disk only once
-_sound_cache: dict[Path, tuple[np.ndarray, int]] = {}
-
-# Keep a single output stream open for the whole game in order to play overlapping sounds without glitches or delays
-_audio_lock                              = threading.Lock()
-_voices: list[list]                      = []      # currently-playing sounds, each a [samples, cursor] pair
-_audio_stream: Optional[sd.OutputStream] = None    # the shared sounddevice.OutputStream, opened on first use
+# sounddevice has no built-in mixer, so we keep one output stream open for the whole game
+# and a callback that sums the currently-playing sounds ("voices") into each output block.
+# That lets effects overlap (e.g. rapid slices) with no per-sound setup cost.
+# Source files could have different sample rates, so each is resampled to AUDIO_SAMPLE_RATE on load;
+# the shared stream runs at that single rate.
+_sound_cache:  dict[Path, np.ndarray]    = {}      # path -> float32 samples (N, channels) at AUDIO_SAMPLE_RATE
+_voices:       list[list]                = []      # active sounds, each a [samples, cursor] entry
+_audio_lock                              = threading.Lock()      # _voices is touched by the audio thread
+_audio_stream: Optional[sd.OutputStream] = None    # opened once in init_audio()
 _muted                                   = False   # when True, play_sound() drops new sounds (toggled with 'm')
 
-def _audio_callback(outdata: np.ndarray, frames: int, time_info, status) -> None:
+def _audio_callback(outdata: np.ndarray, frames: int, _time_info, _status):
     """
     Mixes every active voice into the output buffer. Runs on the audio thread.
-    
+
     Args:
-        outdata: The output buffer to fill with audio samples.
-        frames: The number of frames to be filled in this callback.
-        time_info: Timing information provided by sounddevice (not used here).
-        status: Callback status provided by sounddevice (not used here).
+        outdata:    The output buffer to fill with audio samples.
+        frames:     The number of frames to be filled in this callback.
+        _time_info: Timing information provided by sounddevice (not used here).
+        _status:    Callback status provided by sounddevice (not used here).
     """
+    # Start from silence; every active voice is then summed on top of this buffer
     outdata.fill(0.0)
     with _audio_lock:
-        for voice in _voices:
-            samples, cursor = voice
-            chunk = samples[cursor:cursor + frames]
-            outdata[:len(chunk)] += chunk
-            voice[1] = cursor + len(chunk)
-        # Drop voices that have finished playing
-        _voices[:] = [v for v in _voices if v[1] < len(v[0])]
+        survivors: list[list] = []
+        for samples, cursor in _voices:
+            n     = len(samples)
+            c_len = min(frames, n - cursor)          # samples this voice has left for this block
+            outdata[:c_len] += samples[cursor:cursor + c_len]   # += layers overlapping voices together
+            cursor += c_len
+            # Keep the voice until its cursor reaches the end (fully played)
+            if cursor < n:
+                survivors.append([samples, cursor])
+        _voices[:] = survivors
     # Clamp so several overlapping effects can't sum past full scale and distort
     np.clip(outdata, -1.0, 1.0, out=outdata)
 
 
-def _decode(path: Path) -> tuple[np.ndarray, int]:
+def _resample(samples: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
     """
-    Decodes an audio file to (samples, samplerate), caching the result.
-    
+    Linear-resamples (N, channels) float32 audio from src_rate to dst_rate.
+    Simple but fine for short effects and background music.
+
     Args:
-        path: Path to the audio file to decode.
+        samples:  audio samples as a float32 array of shape (N, channels).
+        src_rate: sample rate of `samples`, in Hz.
+        dst_rate: desired output sample rate, in Hz.
 
     Returns:
-        A tuple of (samples, samplerate).
+        A float32 array of shape (round(N * dst_rate / src_rate), channels) at
+        `dst_rate`, or `samples` unchanged when the two rates already match.
     """
-    import soundfile as sf
-    if path not in _sound_cache:
-        _sound_cache[path] = sf.read(str(path), dtype="float32", always_2d=True)
-    return _sound_cache[path]
+    if src_rate == dst_rate:
+        return samples
+    n_dst = int(round(samples.shape[0] * dst_rate / src_rate))
+    src_x = np.arange(samples.shape[0])
+    dst_x = np.linspace(0, samples.shape[0] - 1, n_dst)
+    out   = np.empty((n_dst, samples.shape[1]), dtype=np.float32)
+    for c in range(samples.shape[1]):
+        out[:, c] = np.interp(dst_x, src_x, samples[:, c])
+    return out
 
 
-def _ensure_stream(fs: int, channels: int) -> None:
+def init_audio():
     """
-    Opens the shared output stream once, matching the given audio format.
-    
-    Args:
-        fs: Sample rate of the audio to be played.
-        channels: Number of channels of the audio to be played.
+    Decode the sound effects (resampling each to AUDIO_SAMPLE_RATE) and open the shared
+    output stream once, before the game loop. Doing the decode/open here (~200 ms) keeps
+    the first in-game slice from hitching. Call once before the main loop.
     """
     global _audio_stream
-    if _audio_stream is None:
-        _audio_stream = sd.OutputStream(
-            samplerate=fs, channels=channels, callback=_audio_callback,
-        )
-        _audio_stream.start()
+    import soundfile as sf
 
+    channels = 2
+    for path in (BLADE_SLICE_SOUND, MISS_MARK_SOUND, GAME_OVER_SOUND, *THROW_SOUNDS):
+        samples, fs = sf.read(str(path), dtype="float32", always_2d=True)
+        _sound_cache[path] = _resample(samples, fs, AUDIO_SAMPLE_RATE)
+        channels = samples.shape[1]
 
-def init_audio() -> None:
-    """
-    Pre-decodes the game's sound effects and opens the audio device up front.
-
-    Opening the device costs ~200 ms, so warming it here at startup keeps the
-    first in-game slice from hitching. Call once before the main loop.
-    """
-    for path in (BLADE_SLICE_SOUND, MISS_MARK_SOUND, GAME_OVER_SOUND):
-        samples, fs = _decode(path)
-        _ensure_stream(fs, samples.shape[1])
+    _audio_stream = sd.OutputStream(
+        samplerate=AUDIO_SAMPLE_RATE, channels=channels, callback=_audio_callback)
+    _audio_stream.start()
 
 
 def toggle_mute() -> bool:
@@ -193,27 +234,23 @@ def toggle_mute() -> bool:
     return _muted
 
 
-def play_sound(path: Path) -> None:
+def play_sound(path: Path):
     """
-    Plays a sound effect asynchronously by mixing it into a shared output stream.
-
-    The file is decoded once and cached; each call then just queues the samples
-    for the always-open stream to mix, so triggering a sound is cheap and never
-    blocks the game loop, even when fired on many consecutive frames.
+    Queue a cached sound effect for the mixer. Non-blocking and cheap, so it is safe to call on many consecutive frames;
+    overlapping calls just stack as extra voices. The sound must have been registered by init_audio().
 
     Args:
         path: Path to the audio file to play.
     """
-    # Skip queuing entirely while muted
-    if _muted:
+    if _muted or _audio_stream is None:
         return
 
-    samples, fs = _decode(path)
-    _ensure_stream(fs, samples.shape[1])
-
-    # Queue the sound for the callback to mix in on its next block
-    with _audio_lock:
-        _voices.append([samples, 0])
+    # Look the sound up in the cache (filled by init_audio) and hand it to the mixer;
+    # .get() avoids a crash if an unregistered path is ever passed
+    samples = _sound_cache.get(path)
+    if samples is not None:
+        with _audio_lock:
+            _voices.append([samples, 0])
 
 # =============================================================================
 # PROJECTILE
@@ -244,10 +281,10 @@ def add_outline(sprite: np.ndarray, color: tuple[int, int, int], thickness: int)
 
     # Apply the outline color to the output image where the outline mask is present
     where = outline > 0
-    out[where, 0] = color[0]
-    out[where, 1] = color[1]
-    out[where, 2] = color[2]
-    out[where, 3] = 255
+    out[where, 0] = color[0] # B channel
+    out[where, 1] = color[1] # G channel
+    out[where, 2] = color[2] # R channel
+    out[where, 3] = 255      # Alpha channel
 
     return out
 
@@ -255,8 +292,8 @@ class ProjectileKind(Enum):
     """
     The three projectile types:
     - `NORMAL`: sliced once for a point
-    - `BOMB`: slicing it is an instant game over
-    - `COMBO`: sliced repeatedly, triggers slow-motion, pure bonus
+    - `BOMB`:   slicing it is an instant game over
+    - `COMBO`:  sliced repeatedly, triggers slow-motion, pure bonus
     """
     NORMAL = auto()     # sliced once for a point
     BOMB   = auto()     # slicing it is an instant game over
@@ -267,37 +304,36 @@ class Projectile:
     """
     Projectile properties and physics state
     """
-    sprite:   np.ndarray        # RGBA image of the projectile
-    x:        float             # horizontal position of the projectile center
-    y:        float             # vertical position of the projectile center
-    vx:       float             # horizontal velocity of the projectile
-    vy:       float             # vertical velocity of the projectile
-    angle:    float = 0.0       # rotation angle of the projectile
-    omega:    float = 0.0       # angular velocity of the projectile
-    sliced:   bool  = False     # flags the two halves so they are not re-sliced
-    scored:   bool  = False     # flags anything that should NOT count as a miss when it leaves the screen
-    kind: ProjectileKind = ProjectileKind.NORMAL  # which of the three projectile types this is
-    hits:     int   = 0         # combo-only: how many times it has been hit so far
+    sprite: np.ndarray        # RGBA image of the projectile
+    x:      float             # horizontal position of the projectile center
+    y:      float             # vertical position of the projectile center
+    vx:     float             # horizontal velocity of the projectile
+    vy:     float             # vertical velocity of the projectile
+    angle:  float = 0.0       # rotation angle of the projectile
+    omega:  float = 0.0       # angular velocity of the projectile
+    sliced: bool  = False     # flags the two halves so they are not re-sliced
+    scored: bool  = False     # flags anything that should NOT count as a miss when it leaves the screen
+    kind:   ProjectileKind = ProjectileKind.NORMAL  # which of the three projectile types this is
+    hits:   int   = 0         # combo-only: how many times it has been hit so far
 
-    def update(self, time_scale: float = 1.0) -> None:
-        # time_scale < 1.0 produces the combo slow-motion effect. Scaling
-        # both gravity and velocity keeps the trajectory shape identical, just
+    def update(self, time_scale: float = 1.0):
+        # time_scale < 1.0 produces the combo slow-motion effect.
+        # Scaling both gravity and velocity keeps the trajectory shape identical, just
         # traversed more slowly — what you'd expect from "time slows down"
-        self.vy    += GRAVITY     * time_scale
-        self.x     += self.vx     * time_scale
-        self.y     += self.vy     * time_scale
-        self.angle += self.omega  * time_scale
+        self.vy    += GRAVITY    * time_scale
+        self.x     += self.vx    * time_scale
+        self.y     += self.vy    * time_scale
+        self.angle += self.omega * time_scale
 
-    def draw(self, frame: np.ndarray) -> None:
+    def draw(self, frame: np.ndarray):
         # Rotate every frame: cheap at ~180px sprites and avoids tracking a separate cached image
         rotated = rotate_rgba(self.sprite, self.angle)
         blit_rgba(frame, rotated, int(self.x), int(self.y))
 
     def hitbox(self) -> tuple[int, int, int, int]:
         """
-        Axis-aligned rect around the projectile center, shrunk by
-        SLICE_HITBOX_SHRINK so the player has to actually cut through the
-        visible object rather than swipe near it.
+        Axis-aligned rect around the projectile center, shrunk by SLICE_HITBOX_SHRINK
+        so the player has to actually cut through the visible object rather than swipe near it.
         Uses the unrotated sprite dims — fine for the squarish objects we get
         from segmentation, and much cheaper than a true rotated-poly test.
         """
@@ -419,8 +455,8 @@ class GameState:
 
         Args:
             sprites: List of RGBA sprites to randomly choose from for the new projectile.
-            W: Width of the game frame.
-            H: Height of the game frame.
+            W:       Width of the game frame.
+            H:       Height of the game frame.
         """
         # Only spawn a new projectile every SPAWN_INTERVAL_FRAMES frames
         if self.frame_count % SPAWN_INTERVAL_FRAMES != 0:
@@ -455,6 +491,9 @@ class GameState:
             kind=kind, scored=(kind is ProjectileKind.COMBO), # Combos are pure bonus so if it leaves the screen unsliced doesn't cost a life
         ))
 
+        # Play one of the throw sounds at random as the projectile is launched
+        play_sound(random.choice(THROW_SOUNDS))
+
     def step(self, W: int, H: int):
         """
         Updates the position of all projectiles based on their velocity and gravity, applies slow-motion if active
@@ -466,9 +505,12 @@ class GameState:
             H: Height of the game frame.
         """
         # Slow-motion is granted by combo hits and decays one real frame per tick
-        time_scale = COMBO_SLOWMO_FACTOR if self.slowmo_frames > 0 else 1.0
-        if self.slowmo_frames > 0:
+        slowmo     = self.slowmo_frames > 0
+        time_scale = COMBO_SLOWMO_FACTOR if slowmo else 1.0
+        if slowmo:
             self.slowmo_frames -= 1
+        # True only on the single frame the slow-mo window closes (1 -> 0)
+        slowmo_just_ended = slowmo and self.slowmo_frames == 0
 
         # Update all projectiles and filter out those that have left the screen and handle misses
         survivors: list[Projectile] = []
@@ -477,6 +519,7 @@ class GameState:
             if p.offscreen(W, H):
                 # A whole projectile that left without being sliced costs a life
                 # Halves (scored=True) and already-sliced fragments don't
+                # Combos (scored=True) since they're bonus the player shouldn't be punished for failing to hit them
                 # Bombs are skipped too
                 if not p.scored and p.kind is not ProjectileKind.BOMB:
                     # Increasing the missing counter
@@ -493,8 +536,12 @@ class GameState:
                     self.miss_marks.append(MissMark(x=mx, y=my))
                 continue
 
-            # Append surviving projectiles from the filter
-            survivors.append(p)
+            # When the slow-mo window closes, any combo that was hit bursts on its own
+            # Gated on slowmo_just_ended, so on every other frame this is one bool check
+            if slowmo_just_ended and p.kind is ProjectileKind.COMBO and p.hits > 0:
+                survivors.extend(_split(p))
+            else:
+                survivors.append(p)
 
         # Update the game state with the surviving projectiles after filtering phase
         self.projectiles = survivors
@@ -526,40 +573,43 @@ class GameState:
 
             # Check for intersection between the slice segment and the projectile's hitbox
             inside, _, _ = cv2.clipLine(proj.hitbox(), p1, p2)
-            if inside:
-                # Play the blade slice sound effect on hit
-                play_sound(BLADE_SLICE_SOUND)
-                
-                match proj.kind:
-                    # Slicing a bomb is an instant game over
-                    case ProjectileKind.BOMB:
-                        # Bump misses to the cap so game_over() flips true on the same frame
-                        self.misses = MAX_MISSES
-                        next_projectiles.append(proj)
+            # If the slice does not intersect the projectile, it survives to the next frame as is
+            if not inside:
+                next_projectiles.append(proj)
+                continue
 
-                    # A combo can be hit multiple times, eventually splitting when it reaches COMBO_MAX_HITS
-                    case ProjectileKind.COMBO:
-                        # Each hit increases the score, refreshes the slow-motion timer, and increments the hit count
-                        self.score        += 1
+            # If inside
+            # Play the blade slice sound effect on hit
+            play_sound(BLADE_SLICE_SOUND)
+
+            match proj.kind:
+                # Slicing a bomb is an instant game over
+                case ProjectileKind.BOMB:
+                    # Bump misses to the cap so game_over() flips true on the same frame
+                    self.misses = MAX_MISSES
+                    next_projectiles.append(proj)
+
+                # A combo can be hit multiple times, eventually splitting when it reaches COMBO_MAX_HITS
+                case ProjectileKind.COMBO:
+                    # Each hit increases the score and increments the hit count
+                    # The slow-motion timer is set only on the first hit
+                    if proj.hits == 0:
                         self.slowmo_frames = COMBO_SLOWMO_DURATION
-                        proj.hits         += 1
+                    self.score        += 1
+                    proj.hits         += 1
 
-                        # On final hit it gets sliced, so the halves get added to the projectile list
-                        if proj.hits >= COMBO_MAX_HITS:
-                            next_projectiles.extend(_split(proj))
-
-                        # Otherwise add it as a whole projectile for the next frame
-                        else:
-                            next_projectiles.append(proj)
-
-                    # Normal projectiles are sliced immediately into halves
-                    case ProjectileKind.NORMAL:
-                        self.score += 1
+                    # On final hit it gets sliced, so the halves get added to the projectile list
+                    if proj.hits >= COMBO_MAX_HITS:
                         next_projectiles.extend(_split(proj))
 
-            # If the slice does not intersect the projectile, it survives to the next frame as is
-            else:
-                next_projectiles.append(proj)
+                    # Otherwise add it as a whole projectile for the next frame
+                    else:
+                        next_projectiles.append(proj)
+
+                # Normal projectiles are sliced immediately into halves
+                case ProjectileKind.NORMAL:
+                    self.score += 1
+                    next_projectiles.extend(_split(proj))
 
         # Update the game state with the new list of projectiles after processing all slices
         self.projectiles = next_projectiles
@@ -573,9 +623,10 @@ def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]):
     Draws a red X at every recent miss, then age and prune the list.
 
     Args:
-        frame: The current video frame to draw on.
+        frame:      The current video frame to draw on.
         miss_marks: List of active MissMark instances to be rendered and aged.
     """
+    survivors: list[MissMark] = []
     # Draw each miss mark as a red X and increment its age
     for m in miss_marks:
         cv2.line(frame, (m.x - MISS_MARK_SIZE, m.y - MISS_MARK_SIZE), (m.x + MISS_MARK_SIZE, m.y + MISS_MARK_SIZE),
@@ -584,8 +635,11 @@ def draw_miss_marks(frame: np.ndarray, miss_marks: list[MissMark]):
                  MISS_MARK_COLOR, MISS_MARK_THICKNESS, cv2.LINE_AA)
         m.age += 1
 
+        if m.age < MISS_MARK_LIFETIME:
+            survivors.append(m)
+
     # Remove miss marks that have exceeded their lifetime
-    miss_marks[:] = [m for m in miss_marks if m.age < MISS_MARK_LIFETIME]
+    miss_marks[:] = survivors
 
 
 def draw_blade(frame: np.ndarray, trail: deque):
@@ -614,7 +668,7 @@ def draw_hud(frame: np.ndarray, state: GameState, W: int):
     Args:
         frame: The current video frame to draw on.
         state: The current game state containing score and misses information.
-        W: The width of the game frame, used to position the HUD elements.
+        W:     The width of the game frame, used to position the HUD elements.
     """
     cv2.putText(frame, f"Score: {state.score}", (W - 230, 35),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
@@ -630,11 +684,11 @@ def draw_game_over(frame: np.ndarray, state: GameState, W: int, H: int):
     Args:
         frame: The current video frame to draw on.
         state: The current game state containing score and misses information.
-        W: The width of the game frame, used to position the HUD elements.
-        H: The height of the game frame, used to position the HUD elements.
+        W:     The width of the game frame, used to position the HUD elements.
+        H:     The height of the game frame, used to position the HUD elements.
     """
     title = "GAME OVER"
-    sub   = f"Final score: {state.score}   |   R = restart   Q = quit"
+    sub   = f"Score: {state.score}   |   R = restart   Q = quit"
 
     (tw, _), _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 2.0, 4)
     (sw, _), _ = cv2.getTextSize(sub,   cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
@@ -656,34 +710,13 @@ def draw_game_over(frame: np.ndarray, state: GameState, W: int, H: int):
 # GAMEPLAY HELPERS
 # =============================================================================
 
-def trim_rgba(sprite: np.ndarray) -> Optional[np.ndarray]:
-    """
-    Crops an RGBA `sprite` tightly to the bounding box of its non-zero alpha pixels.
-    Strips the padding so projectiles get a tight hitbox.
-
-    Returns:
-        The cropped RGBA sprite as a NumPy array, or None if the alpha channel is fully empty.
-    """
-    # If the image doesn't have an alpha channel, return it as is
-    if sprite.ndim != 3 or sprite.shape[2] < 4:
-        return sprite
-
-    # Find the bounding box of non-transparent pixels in the alpha channel
-    ys, xs = np.where(sprite[:, :, 3] > 0)
-    if len(xs) == 0:
-        return None
-
-    # Crop the sprite to the bounding box and return it
-    return sprite[ys.min():ys.max() + 1, xs.min():xs.max() + 1].copy()
-
-
 def rotate_rgba(sprite: np.ndarray, angle_deg: float) -> np.ndarray:
     """
     Rotates `sprite` (BGRA) around its center by `angle_deg` degrees and expands
     the output canvas so the rotated image fits without any corner clipping.
 
     Args:
-        sprite: RGBA image as a NumPy array.
+        sprite:    RGBA image as a NumPy array.
         angle_deg: Rotation angle in degrees (counterclockwise).
 
     Returns:
@@ -717,10 +750,10 @@ def blit_rgba(frame_bgr: np.ndarray, sprite_bgra: np.ndarray, cx: int, cy: int):
     Handles clipping at all four frame edges.
 
     Args:
-        frame_bgr: The destination BGR image (game frame) as a NumPy array.
+        frame_bgr:   The destination BGR image (game frame) as a NumPy array.
         sprite_bgra: The source RGBA image (projectile sprite) as a NumPy array.
-        cx: The x-coordinate of the center position where the sprite should be blitted on the frame.
-        cy: The y-coordinate of the center position where the sprite should be blitted on the frame.
+        cx:          The x-coordinate of the center position where the sprite should be blitted on the frame.
+        cy:          The y-coordinate of the center position where the sprite should be blitted on the frame.
     """
     # Get dimensions of the sprite and frame for clipping calculations
     sh, sw = sprite_bgra.shape[:2]
@@ -740,8 +773,8 @@ def blit_rgba(frame_bgr: np.ndarray, sprite_bgra: np.ndarray, cx: int, cy: int):
 
     # Corresponding source rect in sprite coordinates, after clipping
     dst_x0, dst_y0 = max(0, x0), max(0, y0)
-    dst_x1 = dst_x0 + (src_x1 - src_x0)
-    dst_y1 = dst_y0 + (src_y1 - src_y0)
+    dst_x1         = dst_x0 + (src_x1 - src_x0)
+    dst_y1         = dst_y0 + (src_y1 - src_y0)
 
     # Extract the relevant sprite region and perform alpha compositing onto the frame
     sprite_clip = sprite_bgra[src_y0:src_y1, src_x0:src_x1]

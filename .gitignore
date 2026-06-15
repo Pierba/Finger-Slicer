@@ -6,7 +6,7 @@ __pycache__/
 .vscode/
 assets/*
 previews/*
-.temp/*
+weights/*
 
 # model parameters
 *.pt
