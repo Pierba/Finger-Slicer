@@ -6,17 +6,17 @@ Window GUI for launching the two main components of the Finger Slicer project:
   src/segmentation/segment_objects.py   produce RGBA sprites from a source image
   src/gameplay/gameplay.py              play the Fruit-Ninja-style slicing game
 """
+from   pathlib import Path
+import sys
+# Adjust the import path to include the project root
+ROOT_DIR = Path(__file__).parent
+sys.path.insert(0, str(ROOT_DIR))
+
+from   config        import GAMEPLAY_PATH, SEGMENT_PATH
 import customtkinter as ctk
 import subprocess
-import sys
-from pathlib import Path
 import threading
-from tkinter import BooleanVar, StringVar, filedialog, messagebox
-
-# Paths to the main programs
-ROOT_DIR        = Path(__file__).parent
-SEGMENT_PATH    = str(Path("src/segmentation/segment_objects.py"))
-GAMEPLAY_PATH   = str(Path("src/gameplay/gameplay.py"))
+from   tkinter       import BooleanVar, StringVar, filedialog, messagebox
 
 # CREATE_NEW_CONSOLE is Windows-only, it falls back to 0 on other platforms so the script still runs
 NEW_CONSOLE_FLAG = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
@@ -84,7 +84,7 @@ class LauncherApp:
 
         Args:
             title: The text to show in the section header of the card.
-            pack: Whether to pack the card into the container immediately or let the caller do it.
+            pack:  Whether to pack the card into the container immediately or let the caller do it.
 
         Returns:
             A tuple of (card_frame, body_frame) where card_frame is the outer rounded panel and
@@ -92,8 +92,7 @@ class LauncherApp:
         """
         card = ctk.CTkFrame(self.container, corner_radius=14)
 
-        # Choose to pack the card immediately or do it later when
-        # having content ready to avoid empty cards in the UI
+        # Choose to pack the card immediately or do it later when having content ready to avoid empty cards in the UI
         if pack:
             card.pack(fill="x", pady=8)
 
@@ -187,8 +186,7 @@ class LauncherApp:
 
     def _build_sam_card(self):
         """
-        Creates the SAM mode card with its Auto/Interactive options, packed below
-        the model card.
+        Creates the SAM mode card with its Auto/Interactive options, packed below the model card.
         """
         self.sam_card, sam_body = self._card("SAM mode")
         self.sam_mode = StringVar(value="auto" if not self.interactive.get() else "interactive")
@@ -252,12 +250,12 @@ class LauncherApp:
             return
 
         # Build the command line arguments for running the segmentation script based on user choices
-        cmd = [sys.executable, SEGMENT_PATH, img, "--model-type", self.model_type.get()]
+        cmd = [sys.executable, str(SEGMENT_PATH), img, "--model-type", self.model_type.get()]
         if self.model_type.get() == "sam" and self.interactive.get():
             cmd.append("-i")
 
-        # Launch the segmentation script as a child process so its output shows
-        # in the launcher's console (a separate console window on Windows)
+        # Launch the segmentation script as a child process so its output shows in the launcher's console
+        # (a separate console window on Windows)
         try:
             self._segment_proc = subprocess.Popen(
                 cmd, creationflags=NEW_CONSOLE_FLAG, cwd=str(ROOT_DIR))
@@ -344,7 +342,7 @@ class LauncherApp:
         """
         try:
             subprocess.Popen(
-                [sys.executable, GAMEPLAY_PATH],
+                [sys.executable, str(GAMEPLAY_PATH)],
                 creationflags=NEW_CONSOLE_FLAG, cwd=str(ROOT_DIR))
         except Exception as exc:
             messagebox.showerror("Launch failed", str(exc))
@@ -358,12 +356,11 @@ def main():
     root = ctk.CTk()
     LauncherApp(root)
 
-    # Handler for SIGINT for gracefull closure
+    # Handler for SIGINT for graceful closure
     try:
         root.mainloop()
     except KeyboardInterrupt:
         root.destroy()
-
 
 if __name__ == "__main__":
     main()
